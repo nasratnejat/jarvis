@@ -24,6 +24,7 @@ class OpenAIProvider(AIProvider):
     ):
 
         if not self.api_key:
+
             return {
                 "error": (
                     "My OpenAI API key is not "
@@ -55,6 +56,7 @@ class OpenAIProvider(AIProvider):
         )
 
         try:
+
             print(
                 f"[OPENAI] POST /v1/{endpoint}"
             )
@@ -81,6 +83,7 @@ class OpenAIProvider(AIProvider):
         except urllib.error.HTTPError as e:
 
             try:
+
                 raw_error = (
                     e.read()
                     .decode("utf-8")
@@ -97,6 +100,7 @@ class OpenAIProvider(AIProvider):
                 )
 
                 if message:
+
                     print(
                         "[OPENAI HTTP ERROR]",
                         message,
@@ -166,10 +170,12 @@ class OpenAIProvider(AIProvider):
         }
 
         if tools:
+
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
         try:
+
             serialized = json.dumps(
                 payload,
                 ensure_ascii=False,
@@ -188,28 +194,20 @@ class OpenAIProvider(AIProvider):
             payload,
         )
 
+    # --------------------------------------------------------
+    # LEGACY ROUTER
+    #
+    # Kept so older code will not break.
+    # JarvisAgent no longer calls this.
+    # --------------------------------------------------------
+
     def route(
         self,
         user_message,
     ):
-        """
-        Ask the model to select the first JARVIS
-        tool using an actual Responses API
-        function call.
-
-        Returns:
-            {
-                "tool": "open_website"
-            }
-
-        or:
-
-            {
-                "tool": "none"
-            }
-        """
 
         if not user_message:
+
             return {
                 "tool": "none",
             }
@@ -219,8 +217,7 @@ class OpenAIProvider(AIProvider):
             "name": "select_jarvis_tool",
             "description": (
                 "Select the single best JARVIS tool "
-                "for the user's request. Use 'none' "
-                "when no tool is required."
+                "for the user's request."
             ),
             "parameters": {
                 "type": "object",
@@ -240,12 +237,9 @@ class OpenAIProvider(AIProvider):
                             "browser_observe",
                             "browser_click",
                             "browser_back",
+                            "browser_forward",
                             "browser_close",
                         ],
-                        "description": (
-                            "The single best first "
-                            "JARVIS tool."
-                        ),
                     },
                 },
                 "required": [
@@ -261,52 +255,7 @@ You are J.A.R.V.I.S.'s internal tool router.
 
 Select the single best first tool for the user's request.
 
-Use the meaning of the request, not exact keywords.
-
-Examples:
-
-"take me to NVIDIA's website"
--> open_website
-
-"take me to wikipedia"
--> open_website
-
-"bring up YouTube"
--> open_website
-
-"what's the weather in Berlin?"
--> get_weather
-
-"could you tell me how much an RTX 5090 costs?"
--> search_product_price
-
-"find information about quantum computers"
--> google_search
-
-"find a video about black holes on YouTube"
--> search_youtube
-
-"play some music on YouTube"
--> play_youtube
-
-"turn the volume up"
--> media_control
-
-"what can you see on the current webpage?"
--> browser_observe
-
-"click the NVIDIA link"
--> browser_click
-
-"go back"
--> browser_back
-
-"close the browser"
--> browser_close
-
-For ordinary conversation, greetings, explanations,
-or questions that require no JARVIS action:
--> none
+Use none for ordinary conversation.
 
 Do not answer the user.
 Only call select_jarvis_tool.
@@ -330,35 +279,18 @@ Only call select_jarvis_tool.
             },
         }
 
-        try:
-            serialized = json.dumps(
-                payload,
-                ensure_ascii=False,
-            )
-
-            print(
-                "[OPENAI ROUTER] Approx request chars:",
-                len(serialized),
-            )
-
-        except Exception:
-            pass
-
         data = self._request(
             "responses",
             payload,
         )
 
         if not isinstance(data, dict):
+
             return {
                 "tool": "none",
             }
 
         if data.get("error"):
-            print(
-                "[OPENAI ROUTER ERROR]",
-                data["error"],
-            )
 
             return {
                 "tool": "none",
@@ -370,6 +302,7 @@ Only call select_jarvis_tool.
         )
 
         if not isinstance(output, list):
+
             return {
                 "tool": "none",
             }
@@ -420,21 +353,9 @@ Only call select_jarvis_tool.
                     "tool": "none",
                 }
 
-            tool = tool.strip()
-
-            print(
-                "[OPENAI ROUTER] Selected:",
-                tool,
-            )
-
             return {
-                "tool": tool,
+                "tool": tool.strip()
             }
-
-        print(
-            "[OPENAI ROUTER] No routing "
-            "function call returned."
-        )
 
         return {
             "tool": "none",
@@ -484,6 +405,7 @@ Only call select_jarvis_tool.
         )
 
         if not reply:
+
             return (
                 "I received an empty "
                 "response, Sir."

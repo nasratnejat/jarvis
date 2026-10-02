@@ -1,4 +1,3 @@
-
 import atexit
 import os
 import queue
@@ -61,7 +60,11 @@ WEBSITE_ALIASES = {
 # ============================================================
 
 def _clean_site_name(site):
-    if not isinstance(site, str):
+
+    if not isinstance(
+        site,
+        str,
+    ):
         return ""
 
     site = site.strip().lower()
@@ -78,7 +81,10 @@ def _clean_site_name(site):
 
 
 def resolve_website(site):
-    site = _clean_site_name(site)
+
+    site = _clean_site_name(
+        site
+    )
 
     if not site:
         return None
@@ -92,7 +98,15 @@ def resolve_website(site):
         return WEBSITES[site]
 
     if "." in site:
-        if not site.startswith("http://") and not site.startswith("https://"):
+
+        if (
+            not site.startswith(
+                "http://"
+            )
+            and not site.startswith(
+                "https://"
+            )
+        ):
             return "https://" + site
 
     return None
@@ -131,7 +145,9 @@ class BrowserAgent:
 
         self._worker.start()
 
-        if not self._ready.wait(timeout=15):
+        if not self._ready.wait(
+            timeout=15
+        ):
 
             raise RuntimeError(
                 "JARVIS browser worker failed "
@@ -153,9 +169,9 @@ class BrowserAgent:
             self.shutdown
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # PUBLIC API
-    # --------------------------------------------------------
+    # ========================================================
 
     def open(self, url):
 
@@ -223,6 +239,22 @@ class BrowserAgent:
             "back",
         )
 
+    def forward(self):
+
+        print(
+            "[BROWSER] forward()",
+            "Agent:",
+            id(self),
+            "PID:",
+            os.getpid(),
+            "Thread:",
+            threading.get_ident(),
+        )
+
+        return self._call(
+            "forward",
+        )
+
     def close(self):
 
         print(
@@ -261,9 +293,9 @@ class BrowserAgent:
         except Exception:
             pass
 
-    # --------------------------------------------------------
+    # ========================================================
     # QUEUE
-    # --------------------------------------------------------
+    # ========================================================
 
     def _call(
         self,
@@ -309,9 +341,9 @@ class BrowserAgent:
                 ),
             }
 
-    # --------------------------------------------------------
+    # ========================================================
     # WORKER
-    # --------------------------------------------------------
+    # ========================================================
 
     def _worker_loop(self):
 
@@ -384,6 +416,12 @@ class BrowserAgent:
                             self._back_on_worker()
                         )
 
+                    elif action == "forward":
+
+                        result = (
+                            self._forward_on_worker()
+                        )
+
                     elif action == "close":
 
                         result = (
@@ -403,6 +441,7 @@ class BrowserAgent:
                         }
 
                         if response_queue:
+
                             response_queue.put(
                                 result
                             )
@@ -495,14 +534,13 @@ class BrowserAgent:
                 "[BROWSER] Worker stopped."
             )
 
-    # --------------------------------------------------------
+    # ========================================================
     # SESSION
-    # --------------------------------------------------------
+    # ========================================================
 
     def _create_browser_session(self):
 
         if not self._playwright:
-
             return False
 
         print(
@@ -591,11 +629,14 @@ class BrowserAgent:
         self._browser = None
         self._last_link_map = []
 
-    # --------------------------------------------------------
+    # ========================================================
     # OPEN
-    # --------------------------------------------------------
+    # ========================================================
 
-    def _open_on_worker(self, url):
+    def _open_on_worker(
+        self,
+        url,
+    ):
 
         if not self._ensure_page():
 
@@ -632,9 +673,9 @@ class BrowserAgent:
 
         return self._observe_on_worker()
 
-    # --------------------------------------------------------
+    # ========================================================
     # OBSERVE
-    # --------------------------------------------------------
+    # ========================================================
 
     def _observe_on_worker(self):
 
@@ -671,9 +712,7 @@ class BrowserAgent:
 
         url = self._page.url
 
-        parsed = urlparse(
-            url
-        )
+        parsed = urlparse(url)
 
         domain = (
             parsed.netloc
@@ -694,6 +733,9 @@ class BrowserAgent:
 
             text = ""
 
+        # Keep enough data for the application layer.
+        # The AI-facing formatter in app/ai/tools.py
+        # performs the actual token reduction.
         text = text[:12000]
 
         links = []
@@ -743,9 +785,7 @@ class BrowserAgent:
                     if not link_text:
                         continue
 
-                    if len(
-                        links
-                    ) >= 30:
+                    if len(links) >= 30:
                         break
 
                     links.append({
@@ -775,11 +815,14 @@ class BrowserAgent:
             "links": links,
         }
 
-    # --------------------------------------------------------
+    # ========================================================
     # CLICK
-    # --------------------------------------------------------
+    # ========================================================
 
-    def _click_on_worker(self, index):
+    def _click_on_worker(
+        self,
+        index,
+    ):
 
         if (
             self._page is None
@@ -860,7 +903,24 @@ class BrowserAgent:
             except Exception:
                 pass
 
-            return self._observe_on_worker()
+            result = self._observe_on_worker()
+
+            result["clicked_index"] = index
+
+            result["clicked_text"] = (
+                anchor.inner_text(
+                    timeout=1000
+                ).strip()
+            )
+
+            result["clicked_href"] = (
+                anchor.get_attribute(
+                    "href"
+                )
+                or ""
+            )
+
+            return result
 
         except Exception as e:
 
@@ -876,9 +936,9 @@ class BrowserAgent:
                 ),
             }
 
-    # --------------------------------------------------------
+    # ========================================================
     # BACK
-    # --------------------------------------------------------
+    # ========================================================
 
     def _back_on_worker(self):
 
@@ -928,9 +988,61 @@ class BrowserAgent:
                 ),
             }
 
-    # --------------------------------------------------------
+    # ========================================================
+    # FORWARD
+    # ========================================================
+
+    def _forward_on_worker(self):
+
+        if (
+            self._page is None
+            or self._page.is_closed()
+        ):
+
+            return {
+                "ok": False,
+                "error": (
+                    "No controlled browser "
+                    "page is currently open."
+                ),
+            }
+
+        try:
+
+            result = self._page.go_forward(
+                wait_until="domcontentloaded",
+                timeout=15000,
+            )
+
+            if result is None:
+
+                return {
+                    "ok": False,
+                    "error": (
+                        "There is no next "
+                        "page in browser history."
+                    ),
+                }
+
+            return self._observe_on_worker()
+
+        except Exception as e:
+
+            print(
+                "[BROWSER FORWARD ERROR]",
+                repr(e),
+            )
+
+            return {
+                "ok": False,
+                "error": (
+                    f"Could not go forward: {e}"
+                ),
+            }
+
+    # ========================================================
     # STATUS
-    # --------------------------------------------------------
+    # ========================================================
 
     def _status_on_worker(self):
 
@@ -959,9 +1071,9 @@ class BrowserAgent:
             ),
         }
 
-    # --------------------------------------------------------
+    # ========================================================
     # CLOSE
-    # --------------------------------------------------------
+    # ========================================================
 
     def _close_on_worker(self):
 
@@ -996,9 +1108,7 @@ def open_website(site):
         os.getpid(),
     )
 
-    url = resolve_website(
-        site
-    )
+    url = resolve_website(site)
 
     if not url:
 
@@ -1007,7 +1117,8 @@ def open_website(site):
         )
 
     print(
-        f"[TOOL] open_website {site!r} -> {url}"
+        f"[TOOL] open_website "
+        f"{site!r} -> {url}"
     )
 
     result = browser_agent.open(
