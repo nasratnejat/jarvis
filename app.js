@@ -98,7 +98,7 @@ function randomLine(group) {
 
 function removeSilentMetadata(text) {
   return String(text || "")
-    .replace(/\*[\s\S]*?\*/g, " ")
+    .replace(/\*\*[\s\S]*?\*\*/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -132,16 +132,25 @@ function normalizeCommand(text) {
     [/\bnote\s+pad\b/g, "notepad"],
     [/\bnote-pad\b/g, "notepad"],
     [/\bnotepadd\b/g, "notepad"],
+
     [/\bcrhome\b/g, "chrome"],
     [/\bchrom\b/g, "chrome"],
+
     [/\byou\s+tube\b/g, "youtube"],
+
     [/\bspot\s+ify\b/g, "spotify"],
     [/\bspotty\s+fy\b/g, "spotify"],
+
     [/\bdis\s+cord\b/g, "discord"],
+
     [/\bcalc\b/g, "calculator"],
+
     [/\btask\s+man\b/g, "task manager"],
+
     [/\bvs\s+code\b/g, "vscode"],
+
     [/\bpower\s+shell\b/g, "powershell"],
+
     [/\bfile\s+explorer\b/g, "file explorer"],
   ];
 
@@ -185,7 +194,7 @@ async function refreshHealth() {
     });
 
     if (!response.ok) {
-      throw new Error("Health request failed");
+      throw new Error(`Health HTTP ${response.status}`);
     }
 
     const data = await response.json();
@@ -203,7 +212,7 @@ async function refreshHealth() {
       }
     }
   } catch (err) {
-    console.warn("Health check failed:", err.message);
+    console.warn("[JARVIS] Health check failed:", err.message);
   }
 }
 
@@ -276,14 +285,14 @@ function addMsg(role, html) {
   div.className = `msg ${role}`;
 
   div.innerHTML = `
-    <div class="lbl">
-      ${role === "user" ? "YOU" : "JARVIS"}
-    </div>
+        <div class="lbl">
+            ${role === "user" ? "YOU" : "JARVIS"}
+        </div>
 
-    <div class="txt">
-      ${html}
-    </div>
-  `;
+        <div class="txt">
+            ${html}
+        </div>
+    `;
 
   const shouldScroll = isNearBottom();
 
@@ -297,14 +306,14 @@ function addMsg(role, html) {
 }
 
 // ============================================================
-// IMPORTANT:
-// Update a JARVIS reply visibly.
+// JARVIS REPLY DISPLAY
 // ============================================================
 
 function showJarvisReply(messageEl, text) {
-  const clean = jarvisize(text);
+  const clean = removeSilentMetadata(text);
 
   if (!clean) {
+    console.warn("[JARVIS] Empty reply received.");
     return;
   }
 
@@ -314,15 +323,14 @@ function showJarvisReply(messageEl, text) {
     if (output) {
       output.textContent = clean;
 
-      // Make absolutely sure the reply is visible.
       output.style.display = "block";
       output.style.visibility = "visible";
       output.style.opacity = "1";
     } else {
       messageEl.innerHTML = `
-        <div class="lbl">JARVIS</div>
-        <div class="txt"></div>
-      `;
+                <div class="lbl">JARVIS</div>
+                <div class="txt"></div>
+            `;
 
       const newOutput = messageEl.querySelector(".txt");
 
@@ -334,7 +342,6 @@ function showJarvisReply(messageEl, text) {
     addMsg("jarvis", escapeHtml(clean));
   }
 
-  // Always bring the actual reply into view.
   setTimeout(scrollToLatest, 0);
 }
 
@@ -443,9 +450,9 @@ function drainQueue() {
 
   const utterance = new SpeechSynthesisUtterance(text);
 
-  // ==========================================================
+  // ========================================================
   // VOICE SETTINGS — UNCHANGED
-  // ==========================================================
+  // ========================================================
 
   utterance.rate = 1.15;
   utterance.pitch = 0.86;
@@ -474,7 +481,6 @@ function speak(text) {
 
   if (!window.speechSynthesis) {
     setState("ready", "LISTENING");
-
     return;
   }
 
@@ -537,39 +543,54 @@ document.addEventListener("keydown", (e) => {
 // ============================================================
 
 async function sendMessage(text) {
+  const originalText = String(text || "").trim();
+
   text = normalizeCommand(removeSilentMetadata(text));
 
   if (!text) {
     setState("ready", "LISTENING");
-
     return;
   }
 
+  console.log("[JARVIS] Sending command:", text);
+
+  console.log("[JARVIS] POST:", `${SERVER}/stream`);
+
+  // --------------------------------------------------------
   // User message
+  // --------------------------------------------------------
+
   addMsg("user", escapeHtml(text));
 
   setState("thinking", randomLine("thinking").toUpperCase());
 
+  // --------------------------------------------------------
   // Temporary JARVIS response
+  // --------------------------------------------------------
+
   const messageEl = addMsg(
     "jarvis",
     `
-      <span class="typing">
-        <span>.</span>
-        <span>.</span>
-        <span>.</span>
-      </span>
-    `,
+            <span class="typing">
+                <span>.</span>
+                <span>.</span>
+                <span>.</span>
+            </span>
+        `,
   );
 
   try {
     activeRequest = new AbortController();
 
+    // ----------------------------------------------------
+    // SEND TO FLASK
+    // ----------------------------------------------------
+
     const response = await fetch(`${SERVER}/stream`, {
       method: "POST",
 
       headers: {
-        "Content-Type": "text/plain;charset=UTF-8",
+        "Content-Type": "application/json",
       },
 
       body: JSON.stringify({
@@ -583,9 +604,11 @@ async function sendMessage(text) {
 
     activeRequest = null;
 
-    // ========================================================
+    console.log("[JARVIS] Server HTTP:", response.status);
+
+    // ----------------------------------------------------
     // SERVER ERROR
-    // ========================================================
+    // ----------------------------------------------------
 
     if (!response.ok) {
       let serverMessage = `Server returned HTTP ${response.status}.`;
@@ -593,14 +616,12 @@ async function sendMessage(text) {
       try {
         const errorData = await response.json();
 
-        if (errorData.reply) {
-          serverMessage = errorData.reply;
-        }
+        console.error("[JARVIS] Server error:", errorData);
 
-        if (errorData.error) {
-          serverMessage = errorData.error;
-        }
-      } catch (e) {}
+        serverMessage = errorData.reply || errorData.error || serverMessage;
+      } catch (e) {
+        console.warn("[JARVIS] Could not parse " + "server error JSON.");
+      }
 
       serverMessage = removeSilentMetadata(serverMessage);
 
@@ -611,11 +632,17 @@ async function sendMessage(text) {
       return;
     }
 
-    // ========================================================
+    // ----------------------------------------------------
     // SUCCESS
-    // ========================================================
+    // ----------------------------------------------------
 
     const data = await response.json();
+
+    console.log("[JARVIS] Server response:", data);
+
+    // ----------------------------------------------------
+    // SERVER APPLICATION ERROR
+    // ----------------------------------------------------
 
     if (!data.ok) {
       const error = removeSilentMetadata(
@@ -629,27 +656,56 @@ async function sendMessage(text) {
       return;
     }
 
-    // ========================================================
-    // THIS IS THE IMPORTANT FIX
-    // ========================================================
+    // ----------------------------------------------------
+    // ACTUAL JARVIS REPLY
+    // ----------------------------------------------------
 
-    const reply = jarvisize(data.reply);
+    const rawReply = data.reply ?? data.response ?? data.text ?? "";
 
-    console.log("[JARVIS REPLY]", reply);
+    console.log("[JARVIS] Raw reply:", rawReply);
 
-    // Put the actual PC/server result
-    // into the visible chat.
+    const reply = removeSilentMetadata(rawReply);
+
+    // ----------------------------------------------------
+    // NEVER TURN A MISSING SERVER REPLY INTO
+    // "Nothing to report."
+    // ----------------------------------------------------
+
+    if (!reply) {
+      console.error("[JARVIS] Empty reply from server.", data);
+
+      const fallback = "I received no usable response from the server, Sir.";
+
+      showJarvisReply(messageEl, fallback);
+
+      speak(fallback);
+
+      return;
+    }
+
+    console.log("[JARVIS] Final reply:", reply);
+
+    // ----------------------------------------------------
+    // DISPLAY
+    // ----------------------------------------------------
+
     showJarvisReply(messageEl, reply);
 
-    // Speak the exact same reply.
+    // ----------------------------------------------------
+    // SPEAK
+    // ----------------------------------------------------
+
     speak(reply);
 
-    // Refresh memory as before.
+    // ----------------------------------------------------
+    // MEMORY
+    // ----------------------------------------------------
+
     refreshMemory();
   } catch (err) {
     activeRequest = null;
 
-    console.error("JARVIS request failed:", err);
+    console.error("[JARVIS] Request failed:", err);
 
     let message;
 
@@ -659,7 +715,7 @@ async function sendMessage(text) {
       message = "I couldn't reach the JARVIS server, Sir.";
     }
 
-    showJarvisReply(messageEl, "✕ " + message);
+    showJarvisReply(messageEl, message);
 
     speak(message);
   }
@@ -935,15 +991,16 @@ if (SR) {
         continue;
       }
 
-      // ======================================================
+      // ==================================================
       // SLEEPING
-      // ======================================================
+      // ==================================================
 
       if (!activated) {
         if (containsWakeWord(transcript)) {
           console.log("Wake word detected:", transcript);
 
           activated = true;
+
           wokeFromStandby = true;
 
           clearSpeechBuffer();
@@ -975,9 +1032,9 @@ if (SR) {
         }
       }
 
-      // ======================================================
+      // ==================================================
       // AWAKE
-      // ======================================================
+      // ==================================================
 
       if (result.isFinal) {
         newFinalText += (newFinalText ? " " : "") + transcript;
@@ -988,14 +1045,17 @@ if (SR) {
       }
     }
 
+    // ------------------------------------------------------
     // Remove wake word from current result.
+    // ------------------------------------------------------
+
     if (wokeFromStandby && newFinalText) {
       newFinalText = removeWakeWord(newFinalText);
     }
 
-    // ========================================================
+    // ======================================================
     // SLEEP COMMAND
-    // ========================================================
+    // ======================================================
 
     if (activated && containsSleepCommand(newFinalText || interimText)) {
       if (hasFinalResult) {
@@ -1005,9 +1065,9 @@ if (SR) {
       return;
     }
 
-    // ========================================================
+    // ======================================================
     // STORE AWAKE SPEECH ONLY
-    // ========================================================
+    // ======================================================
 
     if (newFinalText) {
       finalBuffer += (finalBuffer ? " " : "") + newFinalText;
@@ -1015,9 +1075,9 @@ if (SR) {
       finalBuffer = removeSilentMetadata(finalBuffer);
     }
 
-    // ========================================================
+    // ======================================================
     // CURRENT AWAKE SPEECH
-    // ========================================================
+    // ======================================================
 
     const combinedText = removeSilentMetadata(
       finalBuffer + (interimText ? " " + interimText : ""),
@@ -1031,22 +1091,23 @@ if (SR) {
       cmdInput.value = combinedText;
     }
 
-    // ========================================================
+    // ======================================================
     // WAIT FOR FINAL
-    // ========================================================
+    // ======================================================
 
     if (!hasFinalResult) {
       return;
     }
 
-    // ========================================================
+    // ======================================================
     // FINAL COMMAND
-    // ========================================================
+    // ======================================================
 
     const finalCommand = normalizeCommand(finalBuffer);
 
     if (!finalCommand) {
       clearSpeechBuffer();
+
       return;
     }
 
@@ -1092,6 +1153,7 @@ if (SR) {
 
     if (event.error === "aborted" || event.error === "no-speech") {
       scheduleRecognitionRestart();
+
       return;
     }
 
@@ -1166,6 +1228,10 @@ if (SR) {
 // ============================================================
 
 async function sendTyped() {
+  if (!cmdInput) {
+    return;
+  }
+
   const text = removeSilentMetadata(cmdInput.value).trim();
 
   if (!text) {
@@ -1177,6 +1243,10 @@ async function sendTyped() {
   abortRecognition();
 
   cmdInput.value = "";
+
+  activated = true;
+
+  setState("ready", "LISTENING");
 
   await sendMessage(text);
 }
@@ -1191,6 +1261,7 @@ if (cmdInput) {
   cmdInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
+
       sendTyped();
     }
   });
@@ -1213,10 +1284,10 @@ if (resetButton) {
         method: "POST",
 
         headers: {
-          "Content-Type": "text/plain;charset=UTF-8",
+          "Content-Type": "application/json",
         },
 
-        body: "{}",
+        body: JSON.stringify({}),
 
         cache: "no-store",
       });
@@ -1232,7 +1303,6 @@ if (resetButton) {
 
     setState(
       activated ? "ready" : "sleeping",
-
       activated ? "MEMORY CLEARED" : "STANDBY",
     );
   });
@@ -1265,16 +1335,16 @@ async function refreshMemory() {
         .map(
           (item, index) =>
             `
-                <div style="
-                  padding:2px 0;
-                  border-bottom:
-                  1px solid
-                  rgba(0,234,255,0.06)
-                ">
-                  ${index + 1}.
-                  ${escapeHtml(item)}
-                </div>
-              `,
+                                <div style="
+                                    padding:2px 0;
+                                    border-bottom:
+                                    1px solid
+                                    rgba(0,234,255,0.06)
+                                ">
+                                    ${index + 1}.
+                                    ${escapeHtml(item)}
+                                </div>
+                            `,
         )
         .join("");
     } else {

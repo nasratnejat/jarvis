@@ -7,6 +7,7 @@ import pc_tasks
 from config import settings
 from app.ai import OpenAIProvider
 from app.ai import ConversationContext
+from app.ai.agent import JarvisAgent
 from app.commands.timers import timer_manager
 
 
@@ -33,7 +34,12 @@ conversation = ConversationContext(
 
 ai_provider = OpenAIProvider(
     api_key=OPENAI_API_KEY,
-    model=MODEL
+    model=MODEL,
+)
+
+agent = JarvisAgent(
+    provider=ai_provider,
+    conversation=conversation,
 )
 
 
@@ -43,40 +49,20 @@ ai_provider = OpenAIProvider(
 
 @app.after_request
 def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = (
-        "GET, POST, OPTIONS"
-    )
+
+    response.headers[
+        "Access-Control-Allow-Origin"
+    ] = "*"
+
+    response.headers[
+        "Access-Control-Allow-Headers"
+    ] = "*"
+
+    response.headers[
+        "Access-Control-Allow-Methods"
+    ] = "GET, POST, OPTIONS"
 
     return response
-
-
-# --------------------------------------------------
-# AI REQUEST
-# --------------------------------------------------
-
-def ask_openai(user_message):
-
-    previous_messages = (
-        conversation.get_messages()
-    )
-
-    reply = ai_provider.ask(
-        user_message,
-        previous_messages
-    )
-
-    if reply:
-        conversation.add_user(
-            user_message
-        )
-
-        conversation.add_assistant(
-            reply
-        )
-
-    return reply
 
 
 # --------------------------------------------------
@@ -85,33 +71,59 @@ def ask_openai(user_message):
 
 def process_message(text):
 
-    local_result = (
-        pc_tasks.run_pc_task(text)
+    result = agent.process(
+        text
     )
 
-    if local_result is not None:
-        return {
-            "reply": local_result,
-            "type": "local"
-        }
+    reply = result.get(
+        "reply"
+    )
 
-    reply = ask_openai(text)
+    if reply:
 
-    return {
-        "reply": reply,
-        "type": "ai"
-    }
+        conversation.add_user(
+            text
+        )
 
+        conversation.add_assistant(
+            reply
+        )
+
+    return result
+
+
+# --------------------------------------------------
+# RESPONSE
+# --------------------------------------------------
 
 def make_response(result):
 
     return jsonify({
         "ok": True,
-        "reply": result["reply"],
-        "response": result["reply"],
-        "text": result["reply"],
-        "type": result["type"],
-        "state": pc_tasks.get_state()
+
+        "reply": result.get(
+            "reply"
+        ),
+
+        "response": result.get(
+            "reply"
+        ),
+
+        "text": result.get(
+            "reply"
+        ),
+
+        "type": result.get(
+            "type",
+            "ai"
+        ),
+
+        "tools": result.get(
+            "tools",
+            []
+        ),
+
+        "state": pc_tasks.get_state(),
     })
 
 
@@ -140,7 +152,10 @@ def get_message():
     if raw:
 
         try:
-            data = json.loads(raw)
+
+            data = json.loads(
+                raw
+            )
 
             if isinstance(data, dict):
 
@@ -170,7 +185,8 @@ def health():
         "model": MODEL,
         "openai_configured": bool(
             OPENAI_API_KEY
-        )
+        ),
+        "agent": True,
     })
 
 
@@ -183,7 +199,7 @@ def state():
 
     return jsonify({
         "ok": True,
-        "state": pc_tasks.get_state()
+        "state": pc_tasks.get_state(),
     })
 
 
@@ -196,9 +212,10 @@ def memory():
 
     return jsonify({
         "ok": True,
-        "memory": conversation.get_recent(10)
+        "memory": conversation.get_recent(
+            10
+        ),
     })
-
 
 
 # --------------------------------------------------
@@ -206,13 +223,18 @@ def memory():
 # --------------------------------------------------
 
 def _timer_user_id():
+
     import os
 
-    user_id = os.getenv("SUPABASE_USER_ID")
+    user_id = os.getenv(
+        "SUPABASE_USER_ID"
+    )
 
     if not user_id:
+
         raise RuntimeError(
-            "SUPABASE_USER_ID is missing from .env"
+            "SUPABASE_USER_ID is missing "
+            "from .env"
         )
 
     return user_id
@@ -222,6 +244,7 @@ def _timer_user_id():
 def timers():
 
     try:
+
         items = timer_manager.list_active(
             _timer_user_id()
         )
@@ -232,7 +255,12 @@ def timers():
         })
 
     except Exception as e:
-        print("[TIMERS GET ERROR]", repr(e))
+
+        print(
+            "[TIMERS GET ERROR]",
+            repr(e),
+        )
+
         return jsonify({
             "ok": False,
             "error": str(e),
@@ -243,30 +271,41 @@ def timers():
 def timers_due():
 
     try:
+
         user_id = _timer_user_id()
 
-        triggered = timer_manager.claim_due(
-            user_id
+        triggered = (
+            timer_manager.claim_due(
+                user_id
+            )
         )
 
-        recent = timer_manager.recent_triggered(
-            user_id,
-            seconds=120,
+        recent = (
+            timer_manager.recent_triggered(
+                user_id,
+                seconds=120,
+            )
         )
 
-        # De-duplicate by id so a client never receives the
-        # same item twice from the claim + recent query.
         seen = set()
         due_items = []
 
         for item in triggered + recent:
-            item_id = item.get("id")
+
+            item_id = item.get(
+                "id"
+            )
 
             if item_id in seen:
                 continue
 
-            seen.add(item_id)
-            due_items.append(item)
+            seen.add(
+                item_id
+            )
+
+            due_items.append(
+                item
+            )
 
         return jsonify({
             "ok": True,
@@ -274,7 +313,12 @@ def timers_due():
         })
 
     except Exception as e:
-        print("[TIMERS DUE ERROR]", repr(e))
+
+        print(
+            "[TIMERS DUE ERROR]",
+            repr(e),
+        )
+
         return jsonify({
             "ok": False,
             "error": str(e),
@@ -285,15 +329,20 @@ def timers_due():
 def delete_timer(item_id):
 
     try:
+
         item = timer_manager.cancel(
             _timer_user_id(),
             item_id,
         )
 
         if not item:
+
             return jsonify({
                 "ok": False,
-                "error": "Timer or reminder not found.",
+                "error": (
+                    "Timer or reminder "
+                    "not found."
+                ),
             }), 404
 
         return jsonify({
@@ -302,11 +351,17 @@ def delete_timer(item_id):
         })
 
     except Exception as e:
-        print("[TIMERS DELETE ERROR]", repr(e))
+
+        print(
+            "[TIMERS DELETE ERROR]",
+            repr(e),
+        )
+
         return jsonify({
             "ok": False,
             "error": str(e),
         }), 500
+
 
 # --------------------------------------------------
 # RESET
@@ -319,7 +374,9 @@ def reset():
 
     return jsonify({
         "ok": True,
-        "reply": "Conversation reset, Sir."
+        "reply": (
+            "Conversation reset, Sir."
+        ),
     })
 
 
@@ -339,7 +396,7 @@ def chat():
             "reply": (
                 "Please give me something "
                 "to work with, Sir."
-            )
+            ),
         }), 400
 
     print(
@@ -348,27 +405,31 @@ def chat():
 
     try:
 
-        result = process_message(text)
-
-        print(
-            f"[JARVIS] Response type: "
-            f"{result['type']}"
+        result = process_message(
+            text
         )
 
-        return make_response(result)
+        print(
+            "[JARVIS] Response type: "
+            f"{result.get('type')}"
+        )
+
+        return make_response(
+            result
+        )
 
     except Exception as e:
 
         print(
             "[CHAT ERROR]",
-            repr(e)
+            repr(e),
         )
 
         return jsonify({
             "ok": False,
             "reply": (
                 f"I encountered an error, Sir: {e}"
-            )
+            ),
         }), 500
 
 
@@ -388,7 +449,7 @@ def stream():
             "reply": (
                 "Please give me something "
                 "to work with, Sir."
-            )
+            ),
         }), 400
 
     print(
@@ -397,27 +458,31 @@ def stream():
 
     try:
 
-        result = process_message(text)
-
-        print(
-            f"[JARVIS] Response type: "
-            f"{result['type']}"
+        result = process_message(
+            text
         )
 
-        return make_response(result)
+        print(
+            "[JARVIS] Response type: "
+            f"{result.get('type')}"
+        )
+
+        return make_response(
+            result
+        )
 
     except Exception as e:
 
         print(
             "[STREAM ERROR]",
-            repr(e)
+            repr(e),
         )
 
         return jsonify({
             "ok": False,
             "reply": (
                 f"I encountered an error, Sir: {e}"
-            )
+            ),
         }), 500
 
 
@@ -427,7 +492,7 @@ def stream():
 
 @app.route(
     "/stream",
-    methods=["OPTIONS"]
+    methods=["OPTIONS"],
 )
 def stream_options():
 
@@ -436,7 +501,7 @@ def stream_options():
 
 @app.route(
     "/chat",
-    methods=["OPTIONS"]
+    methods=["OPTIONS"],
 )
 def chat_options():
 
@@ -445,7 +510,7 @@ def chat_options():
 
 @app.route(
     "/reset",
-    methods=["OPTIONS"]
+    methods=["OPTIONS"],
 )
 def reset_options():
 
@@ -461,7 +526,7 @@ def not_found(_):
 
     return jsonify({
         "ok": False,
-        "error": "Endpoint not found"
+        "error": "Endpoint not found",
     }), 404
 
 
@@ -470,12 +535,12 @@ def internal_error(error):
 
     print(
         "[FLASK 500]",
-        repr(error)
+        repr(error),
     )
 
     return jsonify({
         "ok": False,
-        "error": str(error)
+        "error": str(error),
     }), 500
 
 
@@ -487,7 +552,7 @@ if __name__ == "__main__":
 
     print()
     print("=" * 55)
-    print("J.A.R.V.I.S. — AI MODULE")
+    print("J.A.R.V.I.S. — AI AGENT")
     print("=" * 55)
 
     print(
@@ -499,9 +564,17 @@ if __name__ == "__main__":
     )
 
     if OPENAI_API_KEY:
-        print("OpenAI : configured")
+        print(
+            "OpenAI : configured"
+        )
     else:
-        print("OpenAI : MISSING API KEY")
+        print(
+            "OpenAI : MISSING API KEY"
+        )
+
+    print(
+        "Agent  : tool calling enabled"
+    )
 
     print("=" * 55)
     print()
@@ -510,5 +583,5 @@ if __name__ == "__main__":
         host=HOST,
         port=PORT,
         debug=settings.DEBUG,
-        threaded=True
+        threaded=True,
     )
