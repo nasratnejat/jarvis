@@ -1,6 +1,6 @@
 // ============================================================
 // J.A.R.V.I.S. — app.js
-// BATCH 1 — TRUE STANDBY / WAKE-WORD CONTROL
+// TRUE STANDBY / WAKE-WORD CONTROL
 // ============================================================
 
 const SERVER = "http://127.0.0.1:5000";
@@ -20,14 +20,11 @@ const memList = document.getElementById("mem-list");
 
 let mode = "sleeping";
 let activated = false;
-
 let finalBuffer = "";
 let cmdTimer = null;
-
 let isSpeaking = false;
 let jarvisVoice = null;
 let activeRequest = null;
-
 let recognitionStarting = false;
 let recognitionRunning = false;
 let recognitionRestartTimer = null;
@@ -270,6 +267,10 @@ function scrollToLatest() {
 }
 
 function addMsg(role, html) {
+  if (!chatLog) {
+    return null;
+  }
+
   const div = document.createElement("div");
 
   div.className = `msg ${role}`;
@@ -293,6 +294,48 @@ function addMsg(role, html) {
   }
 
   return div;
+}
+
+// ============================================================
+// IMPORTANT:
+// Update a JARVIS reply visibly.
+// ============================================================
+
+function showJarvisReply(messageEl, text) {
+  const clean = jarvisize(text);
+
+  if (!clean) {
+    return;
+  }
+
+  if (messageEl) {
+    const output = messageEl.querySelector(".txt");
+
+    if (output) {
+      output.textContent = clean;
+
+      // Make absolutely sure the reply is visible.
+      output.style.display = "block";
+      output.style.visibility = "visible";
+      output.style.opacity = "1";
+    } else {
+      messageEl.innerHTML = `
+        <div class="lbl">JARVIS</div>
+        <div class="txt"></div>
+      `;
+
+      const newOutput = messageEl.querySelector(".txt");
+
+      if (newOutput) {
+        newOutput.textContent = clean;
+      }
+    }
+  } else {
+    addMsg("jarvis", escapeHtml(clean));
+  }
+
+  // Always bring the actual reply into view.
+  setTimeout(scrollToLatest, 0);
 }
 
 // ============================================================
@@ -321,7 +364,9 @@ function loadVoice() {
 
     if (voice) {
       jarvisVoice = voice;
+
       console.log("JARVIS voice:", voice.name);
+
       return;
     }
   }
@@ -341,6 +386,7 @@ function loadVoice() {
 
 if (window.speechSynthesis) {
   speechSynthesis.onvoiceschanged = loadVoice;
+
   loadVoice();
 }
 
@@ -374,7 +420,6 @@ function drainQueue() {
       stopBtn.style.display = "none";
     }
 
-    // Restart recognition only after speech ends.
     setTimeout(startRecognition, 100);
 
     return;
@@ -429,6 +474,7 @@ function speak(text) {
 
   if (!window.speechSynthesis) {
     setState("ready", "LISTENING");
+
     return;
   }
 
@@ -495,13 +541,16 @@ async function sendMessage(text) {
 
   if (!text) {
     setState("ready", "LISTENING");
+
     return;
   }
 
+  // User message
   addMsg("user", escapeHtml(text));
 
   setState("thinking", randomLine("thinking").toUpperCase());
 
+  // Temporary JARVIS response
   const messageEl = addMsg(
     "jarvis",
     `
@@ -513,24 +562,30 @@ async function sendMessage(text) {
     `,
   );
 
-  const output = messageEl.querySelector(".txt");
-
   try {
     activeRequest = new AbortController();
 
     const response = await fetch(`${SERVER}/stream`, {
       method: "POST",
+
       headers: {
         "Content-Type": "text/plain;charset=UTF-8",
       },
+
       body: JSON.stringify({
         message: text,
       }),
+
       signal: activeRequest.signal,
+
       cache: "no-store",
     });
 
     activeRequest = null;
+
+    // ========================================================
+    // SERVER ERROR
+    // ========================================================
 
     if (!response.ok) {
       let serverMessage = `Server returned HTTP ${response.status}.`;
@@ -549,12 +604,16 @@ async function sendMessage(text) {
 
       serverMessage = removeSilentMetadata(serverMessage);
 
-      output.textContent = serverMessage;
+      showJarvisReply(messageEl, serverMessage);
 
       speak(serverMessage);
 
       return;
     }
+
+    // ========================================================
+    // SUCCESS
+    // ========================================================
 
     const data = await response.json();
 
@@ -563,19 +622,29 @@ async function sendMessage(text) {
         data.reply || data.error || "The server returned an error, Sir.",
       );
 
-      output.textContent = error;
+      showJarvisReply(messageEl, error);
 
       speak(error);
 
       return;
     }
 
+    // ========================================================
+    // THIS IS THE IMPORTANT FIX
+    // ========================================================
+
     const reply = jarvisize(data.reply);
 
-    output.textContent = reply;
+    console.log("[JARVIS REPLY]", reply);
 
+    // Put the actual PC/server result
+    // into the visible chat.
+    showJarvisReply(messageEl, reply);
+
+    // Speak the exact same reply.
     speak(reply);
 
+    // Refresh memory as before.
     refreshMemory();
   } catch (err) {
     activeRequest = null;
@@ -590,7 +659,7 @@ async function sendMessage(text) {
       message = "I couldn't reach the JARVIS server, Sir.";
     }
 
-    output.textContent = "✕ " + removeSilentMetadata(message);
+    showJarvisReply(messageEl, "✕ " + message);
 
     speak(message);
   }
@@ -625,6 +694,7 @@ function clearSpeechBuffer() {
   finalBuffer = "";
 
   clearTimeout(cmdTimer);
+
   cmdTimer = null;
 
   if (cmdInput) {
@@ -726,6 +796,7 @@ function scheduleRecognitionRestart() {
 
 function abortRecognition() {
   clearTimeout(recognitionRestartTimer);
+
   recognitionRestartTimer = null;
 
   if (!rec) {
@@ -747,15 +818,7 @@ function abortRecognition() {
 function goSleep() {
   console.log("JARVIS entering true standby.");
 
-  // ----------------------------------------------------------
-  // Immediately disable command mode.
-  // ----------------------------------------------------------
-
   activated = false;
-
-  // ----------------------------------------------------------
-  // Destroy anything already being processed.
-  // ----------------------------------------------------------
 
   clearSpeechBuffer();
 
@@ -767,15 +830,7 @@ function goSleep() {
     activeRequest = null;
   }
 
-  // ----------------------------------------------------------
-  // Stop recognition.
-  // ----------------------------------------------------------
-
   abortRecognition();
-
-  // ----------------------------------------------------------
-  // Stop speech queue.
-  // ----------------------------------------------------------
 
   speakQueue.length = 0;
   queueRunning = false;
@@ -783,10 +838,6 @@ function goSleep() {
   if (window.speechSynthesis) {
     speechSynthesis.cancel();
   }
-
-  // ----------------------------------------------------------
-  // Offline response.
-  // ----------------------------------------------------------
 
   const goodbye = new SpeechSynthesisUtterance(
     removeSilentMetadata(randomLine("offline")),
@@ -815,16 +866,10 @@ function goSleep() {
       stopBtn.style.display = "none";
     }
 
-    // --------------------------------------------------------
-    // TRUE STANDBY
-    // --------------------------------------------------------
-
     setState("sleeping", "STANDBY");
 
     clearSpeechBuffer();
 
-    // Start recognition again ONLY for wake-word detection.
-    // No command buffer exists while asleep.
     setTimeout(() => {
       if (!activated && !isSpeaking) {
         startRecognition();
@@ -895,14 +940,6 @@ if (SR) {
       // ======================================================
 
       if (!activated) {
-        // IMPORTANT:
-        // Do NOT put sleeping speech into finalBuffer.
-        // Do NOT display it.
-        // Do NOT send it to the server.
-        // Do NOT remember it.
-        //
-        // We only inspect it for a wake phrase.
-
         if (containsWakeWord(transcript)) {
           console.log("Wake word detected:", transcript);
 
@@ -915,24 +952,25 @@ if (SR) {
 
           setState("ready", "LISTENING");
 
-          // If the wake phrase contained an immediate command,
-          // keep only the text after the wake word.
           if (result.isFinal) {
             if (afterWake) {
               finalBuffer = afterWake;
             } else {
               speak(randomLine("wake"));
+
               return;
             }
           } else {
-            cmdInput.value = afterWake || "";
+            if (cmdInput) {
+              cmdInput.value = afterWake || "";
+            }
 
             if (!afterWake) {
               return;
             }
           }
         } else {
-          // Completely ignore sleeping speech.
+          // Sleeping speech is ignored.
           return;
         }
       }
@@ -950,12 +988,9 @@ if (SR) {
       }
     }
 
-    // A wake-word result has already been consumed above.
-    // Do not append the same transcript a second time.
+    // Remove wake word from current result.
     if (wokeFromStandby && newFinalText) {
-      const cleanedWakeCommand = removeWakeWord(newFinalText);
-
-      newFinalText = cleanedWakeCommand;
+      newFinalText = removeWakeWord(newFinalText);
     }
 
     // ========================================================
@@ -963,9 +998,6 @@ if (SR) {
     // ========================================================
 
     if (activated && containsSleepCommand(newFinalText || interimText)) {
-      // Do not wait for the server.
-      // Do not add the sleep command to the buffer.
-
       if (hasFinalResult) {
         goSleep();
       }
@@ -995,11 +1027,9 @@ if (SR) {
       return;
     }
 
-    // ========================================================
-    // DISPLAY CURRENT COMMAND
-    // ========================================================
-
-    cmdInput.value = combinedText;
+    if (cmdInput) {
+      cmdInput.value = combinedText;
+    }
 
     // ========================================================
     // WAIT FOR FINAL
@@ -1075,11 +1105,6 @@ if (SR) {
   rec.onend = () => {
     recognitionStarting = false;
     recognitionRunning = false;
-
-    // Recognition must continue while sleeping
-    // only because it is the wake-word detector.
-    //
-    // But sleeping speech is NEVER buffered.
 
     if (!isSpeaking && mode !== "thinking") {
       scheduleRecognitionRestart();
@@ -1186,22 +1211,28 @@ if (resetButton) {
     try {
       await fetch(`${SERVER}/reset`, {
         method: "POST",
+
         headers: {
           "Content-Type": "text/plain;charset=UTF-8",
         },
+
         body: "{}",
+
         cache: "no-store",
       });
     } catch (e) {
       console.warn("Reset failed:", e);
     }
 
-    chatLog.innerHTML = "";
+    if (chatLog) {
+      chatLog.innerHTML = "";
+    }
 
     addMsg("jarvis", "Conversation cleared.");
 
     setState(
       activated ? "ready" : "sleeping",
+
       activated ? "MEMORY CLEARED" : "STANDBY",
     );
   });
@@ -1219,6 +1250,7 @@ async function refreshMemory() {
   try {
     const response = await fetch(`${SERVER}/memory`, {
       signal: AbortSignal.timeout(3000),
+
       cache: "no-store",
     });
 
@@ -1254,6 +1286,7 @@ async function refreshMemory() {
 }
 
 refreshMemory();
+
 setInterval(refreshMemory, 8000);
 
 // ============================================================
@@ -1264,6 +1297,7 @@ async function pollTimerNotifications() {
   try {
     const response = await fetch(`${SERVER}/timers/due`, {
       signal: AbortSignal.timeout(3000),
+
       cache: "no-store",
     });
 
@@ -1278,7 +1312,9 @@ async function pollTimerNotifications() {
     }
 
     for (const item of data.due) {
-      const eventKey = `${item.id}:${item.last_triggered_at || item.updated_at || ""}`;
+      const eventKey = `${item.id}:${
+        item.last_triggered_at || item.updated_at || ""
+      }`;
 
       if (spokenTimerEvents.has(eventKey)) {
         continue;
@@ -1286,9 +1322,9 @@ async function pollTimerNotifications() {
 
       spokenTimerEvents.set(eventKey, Date.now());
 
-      // Keep the browser-side history bounded.
       if (spokenTimerEvents.size > 200) {
         const oldest = spokenTimerEvents.keys().next().value;
+
         spokenTimerEvents.delete(oldest);
       }
 
@@ -1298,7 +1334,7 @@ async function pollTimerNotifications() {
 
       const message =
         kind === "timer"
-          ? `Sir, your timer has finished.`
+          ? "Sir, your timer has finished."
           : `Sir, reminder: ${title}.`;
 
       addMsg("jarvis", escapeHtml(message));
@@ -1310,13 +1346,12 @@ async function pollTimerNotifications() {
       }
     }
   } catch (error) {
-    // Timer polling is background infrastructure.
-    // Do not disturb the main UI if the server is unavailable.
     console.debug("Timer polling:", error.message);
   }
 }
 
 pollTimerNotifications();
+
 setInterval(pollTimerNotifications, 2000);
 
 // ============================================================
@@ -1337,6 +1372,7 @@ setTimeout(() => {
   setTimeout(() => {
     setState(
       activated ? "ready" : "sleeping",
+
       activated ? "LISTENING" : "STANDBY",
     );
   }, 2200);

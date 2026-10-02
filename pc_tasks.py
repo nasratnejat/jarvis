@@ -42,7 +42,7 @@ def run_pc_task(command):
     except Exception as e:
         print(
             "[PC TASK ERROR]",
-            repr(e),
+            repr(e)
         )
 
         return None

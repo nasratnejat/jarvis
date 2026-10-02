@@ -1,3 +1,5 @@
+import re
+
 from app.commands.registry import CommandRegistry
 
 from app.commands.time_date import (
@@ -42,9 +44,25 @@ from app.commands.timers import (
     handle_timer_command,
 )
 
-from weather import get_weather, DEFAULT_CITY
+from app.commands.network import (
+    is_network_command,
+    handle_network_command,
+)
 
-import re
+from app.commands.processes import (
+    is_process_command,
+    handle_process_command,
+)
+
+from app.commands.media import (
+    is_media_command,
+    handle_media_command,
+)
+
+from weather import (
+    get_weather,
+    DEFAULT_CITY,
+)
 
 
 def is_weather_command(command):
@@ -63,7 +81,10 @@ def handle_weather(command):
     city = DEFAULT_CITY
 
     match = re.search(
-        r"weather\s+(?:in|for|at)?\s+([a-z ]+?)(?:\s*\?|$)",
+        r"\bweather"
+        r"(?:\s+(?:in|for|at))?"
+        r"\s+([a-z ]+?)"
+        r"(?:\s*$)",
         c,
     )
 
@@ -74,8 +95,10 @@ def handle_weather(command):
 
 
 class CommandRouter:
+
     def __init__(self):
         self.registry = CommandRegistry()
+
         self._register_commands()
 
     def _register_commands(self):
@@ -90,6 +113,34 @@ class CommandRouter:
             "timer",
             is_timer_command,
             handle_timer_command,
+        )
+
+        self.registry.register(
+            "network",
+            is_network_command,
+            handle_network_command,
+        )
+
+        self.registry.register(
+            "process",
+            is_process_command,
+            handle_process_command,
+        )
+
+        # Browser comes BEFORE generic media.
+        # This prevents "play X on YouTube"
+        # from becoming a Windows media-key command.
+
+        self.registry.register(
+            "browser",
+            is_browser_command,
+            handle_browser_command,
+        )
+
+        self.registry.register(
+            "media",
+            is_media_command,
+            handle_media_command,
         )
 
         self.registry.register(
@@ -114,12 +165,6 @@ class CommandRouter:
             "date",
             is_date_command,
             handle_date,
-        )
-
-        self.registry.register(
-            "browser",
-            is_browser_command,
-            handle_browser_command,
         )
 
         self.registry.register(
