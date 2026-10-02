@@ -17,7 +17,6 @@ def run_pc_task(command):
         return None
 
     try:
-
         print(
             f"[PC TASK] Processing: {command!r}"
         )
@@ -27,7 +26,6 @@ def run_pc_task(command):
         )
 
         if result is not None:
-
             print(
                 f"[PC TASK] Result: {result!r}"
             )
@@ -42,7 +40,6 @@ def run_pc_task(command):
         return None
 
     except Exception as e:
-
         print(
             "[PC TASK ERROR]",
             repr(e),
@@ -52,7 +49,6 @@ def run_pc_task(command):
 
 
 def get_state():
-
     return {
         "online": True,
         "command_registry": True,
@@ -61,5 +57,4 @@ def get_state():
 
 
 def get_available_commands():
-
     return router.get_commands()
