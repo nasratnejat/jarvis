@@ -1278,7 +1278,8 @@ async function pollTimerNotifications() {
     }
 
     for (const item of data.due) {
-      const eventKey = `${item.id}:${item.last_triggered_at || item.updated_at || ""}`;
+      const eventKey =
+        `${item.id}:${item.last_triggered_at || item.updated_at || ""}`;
 
       if (spokenTimerEvents.has(eventKey)) {
         continue;
@@ -1292,9 +1293,14 @@ async function pollTimerNotifications() {
         spokenTimerEvents.delete(oldest);
       }
 
-      const kind = item.type === "timer" ? "timer" : "reminder";
+      const kind =
+        item.type === "timer"
+          ? "timer"
+          : "reminder";
 
-      const title = removeSilentMetadata(item.title || "Reminder");
+      const title = removeSilentMetadata(
+        item.title || "Reminder",
+      );
 
       const message =
         kind === "timer"
