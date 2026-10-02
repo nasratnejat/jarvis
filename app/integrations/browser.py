@@ -1,10 +1,17 @@
 import atexit
 import os
 import queue
+import re
 import threading
-from urllib.parse import urlparse, quote_plus
 
-from playwright.sync_api import sync_playwright
+from urllib.parse import (
+    quote_plus,
+    urlparse,
+)
+
+from playwright.sync_api import (
+    sync_playwright,
+)
 
 
 # ============================================================
@@ -59,7 +66,9 @@ WEBSITE_ALIASES = {
 # WEBSITE RESOLUTION
 # ============================================================
 
-def _clean_site_name(site):
+def _clean_site_name(
+    site,
+):
 
     if not isinstance(
         site,
@@ -71,8 +80,14 @@ def _clean_site_name(site):
 
     site = (
         site
-        .replace("https://", "")
-        .replace("http://", "")
+        .replace(
+            "https://",
+            "",
+        )
+        .replace(
+            "http://",
+            "",
+        )
         .strip("/")
         .strip()
     )
@@ -80,7 +95,9 @@ def _clean_site_name(site):
     return site
 
 
-def resolve_website(site):
+def resolve_website(
+    site,
+):
 
     site = _clean_site_name(
         site
@@ -99,17 +116,51 @@ def resolve_website(site):
 
     if "." in site:
 
-        if (
-            not site.startswith(
-                "http://"
-            )
-            and not site.startswith(
-                "https://"
-            )
+        if not site.startswith(
+            "http://"
+        ) and not site.startswith(
+            "https://"
         ):
-            return "https://" + site
+
+            return (
+                "https://"
+                + site
+            )
 
     return None
+
+
+# ============================================================
+# TEXT NORMALIZATION
+# ============================================================
+
+def _normalize_click_text(
+    value,
+):
+
+    value = str(
+        value or ""
+    ).strip().lower()
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        value,
+    )
+
+    value = re.sub(
+        r"[^\w\s.-]",
+        " ",
+        value,
+    )
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        value,
+    )
+
+    return value.strip()
 
 
 # ============================================================
@@ -126,7 +177,8 @@ class BrowserAgent:
 
         self._shutdown_requested = False
 
-        self._last_link_map = []
+        # Maps observation indexes to DOM action IDs.
+        self._last_action_map = []
 
         self._playwright = None
         self._browser = None
@@ -173,7 +225,10 @@ class BrowserAgent:
     # PUBLIC API
     # ========================================================
 
-    def open(self, url):
+    def open(
+        self,
+        url,
+    ):
 
         print(
             "[BROWSER] open()",
@@ -203,10 +258,14 @@ class BrowserAgent:
         )
 
         return self._call(
-            "observe",
+            "observe"
         )
 
-    def click(self, index):
+    def click(
+        self,
+        index=None,
+        target=None,
+    ):
 
         print(
             "[BROWSER] click()",
@@ -216,11 +275,16 @@ class BrowserAgent:
             os.getpid(),
             "Thread:",
             threading.get_ident(),
+            "index:",
+            index,
+            "target:",
+            target,
         )
 
         return self._call(
             "click",
             index=index,
+            target=target,
         )
 
     def back(self):
@@ -236,7 +300,7 @@ class BrowserAgent:
         )
 
         return self._call(
-            "back",
+            "back"
         )
 
     def forward(self):
@@ -252,7 +316,7 @@ class BrowserAgent:
         )
 
         return self._call(
-            "forward",
+            "forward"
         )
 
     def close(self):
@@ -268,13 +332,13 @@ class BrowserAgent:
         )
 
         return self._call(
-            "close",
+            "close"
         )
 
     def status(self):
 
         return self._call(
-            "status",
+            "status"
         )
 
     def shutdown(self):
@@ -406,7 +470,10 @@ class BrowserAgent:
                             self._click_on_worker(
                                 request.get(
                                     "index"
-                                )
+                                ),
+                                request.get(
+                                    "target"
+                                ),
                             )
                         )
 
@@ -441,7 +508,6 @@ class BrowserAgent:
                         }
 
                         if response_queue:
-
                             response_queue.put(
                                 result
                             )
@@ -459,7 +525,6 @@ class BrowserAgent:
                         }
 
                     if response_queue:
-
                         response_queue.put(
                             result
                         )
@@ -477,7 +542,6 @@ class BrowserAgent:
                     }
 
                     if response_queue:
-
                         response_queue.put(
                             result
                         )
@@ -538,7 +602,9 @@ class BrowserAgent:
     # SESSION
     # ========================================================
 
-    def _create_browser_session(self):
+    def _create_browser_session(
+        self,
+    ):
 
         if not self._playwright:
             return False
@@ -567,7 +633,7 @@ class BrowserAgent:
             self._context.new_page()
         )
 
-        self._last_link_map = []
+        self._last_action_map = []
 
         print(
             "[BROWSER] Controlled page created.",
@@ -627,7 +693,7 @@ class BrowserAgent:
         self._page = None
         self._context = None
         self._browser = None
-        self._last_link_map = []
+        self._last_action_map = []
 
     # ========================================================
     # OPEN
@@ -674,10 +740,184 @@ class BrowserAgent:
         return self._observe_on_worker()
 
     # ========================================================
+    # PAGE EXTRACTION
+    # ========================================================
+
+    def _extract_page_structure(
+        self,
+    ):
+
+        if not self._page:
+            return {
+                "headings": [],
+                "description": "",
+                "actions": [],
+            }
+
+        script = """
+        () => {
+            const visible = (el) => {
+                if (!el) return false;
+
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+
+                if (style.display === "none") return false;
+                if (style.visibility === "hidden") return false;
+                if (parseFloat(style.opacity || "1") === 0) return false;
+
+                return (
+                    rect.width > 0 &&
+                    rect.height > 0
+                );
+            };
+
+            const clean = (value) =>
+                String(value || "")
+                    .replace(/\\s+/g, " ")
+                    .trim();
+
+            const headings = Array.from(
+                document.querySelectorAll(
+                    "h1, h2, h3"
+                )
+            )
+                .filter(visible)
+                .map((el) =>
+                    clean(el.innerText || el.textContent)
+                )
+                .filter(Boolean)
+                .slice(0, 20);
+
+            const description =
+                document.querySelector(
+                    'meta[name="description"]'
+                )?.content || "";
+
+            const nodes = Array.from(
+                document.querySelectorAll(
+                    [
+                        "a",
+                        "button",
+                        '[role="button"]',
+                        "summary",
+                        'input[type="button"]',
+                        'input[type="submit"]'
+                    ].join(",")
+                )
+            );
+
+            const actions = [];
+
+            for (const el of nodes) {
+                if (!visible(el)) continue;
+
+                const disabled =
+                    el.disabled === true ||
+                    el.getAttribute("aria-disabled") === "true";
+
+                if (disabled) continue;
+
+                const text = clean(
+                    el.innerText ||
+                    el.value ||
+                    el.getAttribute("aria-label") ||
+                    el.getAttribute("title") ||
+                    ""
+                );
+
+                const aria =
+                    clean(
+                        el.getAttribute(
+                            "aria-label"
+                        ) || ""
+                    );
+
+                const title =
+                    clean(
+                        el.getAttribute(
+                            "title"
+                        ) || ""
+                    );
+
+                const href =
+                    el.tagName.toLowerCase() === "a"
+                        ? (
+                            el.getAttribute("href") ||
+                            ""
+                        )
+                        : "";
+
+                if (!text && !aria && !title) {
+                    continue;
+                }
+
+                const id =
+                    actions.length;
+
+                el.setAttribute(
+                    "data-jarvis-action-id",
+                    String(id)
+                );
+
+                actions.push({
+                    id,
+                    text: text.slice(0, 300),
+                    aria_label: aria.slice(0, 200),
+                    title: title.slice(0, 200),
+                    href,
+                    kind:
+                        el.tagName.toLowerCase() === "a"
+                            ? "link"
+                            : "button"
+                });
+
+                if (actions.length >= 60) {
+                    break;
+                }
+            }
+
+            return {
+                headings,
+                description: clean(description).slice(0, 500),
+                actions
+            };
+        }
+        """
+
+        try:
+
+            return (
+                self._page.evaluate(
+                    script
+                )
+                or {
+                    "headings": [],
+                    "description": "",
+                    "actions": [],
+                }
+            )
+
+        except Exception as e:
+
+            print(
+                "[BROWSER] Structure extraction error:",
+                repr(e),
+            )
+
+            return {
+                "headings": [],
+                "description": "",
+                "actions": [],
+            }
+
+    # ========================================================
     # OBSERVE
     # ========================================================
 
-    def _observe_on_worker(self):
+    def _observe_on_worker(
+        self,
+    ):
 
         if (
             self._page is None
@@ -712,7 +952,9 @@ class BrowserAgent:
 
         url = self._page.url
 
-        parsed = urlparse(url)
+        parsed = urlparse(
+            url
+        )
 
         domain = (
             parsed.netloc
@@ -733,87 +975,257 @@ class BrowserAgent:
 
             text = ""
 
-        # Keep enough data for the application layer.
-        # The AI-facing formatter in app/ai/tools.py
-        # performs the actual token reduction.
         text = text[:12000]
 
+        structure = (
+            self._extract_page_structure()
+        )
+
+        actions = structure.get(
+            "actions",
+            [],
+        )
+
+        # Rebuild index map.
+        self._last_action_map = [
+            item.get(
+                "id"
+            )
+            for item in actions
+            if isinstance(
+                item,
+                dict,
+            )
+        ]
+
+        # Expose action data under the historic
+        # "links" field for compatibility with
+        # app/ai/tools.py.
         links = []
 
-        self._last_link_map = []
+        for action in actions:
 
-        try:
+            if not isinstance(
+                action,
+                dict,
+            ):
+                continue
 
-            anchors = self._page.locator(
-                "a"
-            )
-
-            count = min(
-                anchors.count(),
-                1000,
-            )
-
-            visible_index = 0
-
-            for raw_index in range(count):
-
-                try:
-
-                    anchor = anchors.nth(
-                        raw_index
-                    )
-
-                    if not anchor.is_visible():
-                        continue
-
-                    link_text = (
-                        anchor.inner_text(
-                            timeout=1000
-                        )
-                        .strip()
-                    )
-
-                    href = (
-                        anchor.get_attribute(
-                            "href"
-                        )
-                    )
-
-                    if not href:
-                        continue
-
-                    if not link_text:
-                        continue
-
-                    if len(links) >= 30:
-                        break
-
-                    links.append({
-                        "index": visible_index,
-                        "text": link_text[:300],
-                        "href": href,
-                    })
-
-                    self._last_link_map.append(
-                        raw_index
-                    )
-
-                    visible_index += 1
-
-                except Exception:
-                    continue
-
-        except Exception:
-            pass
+            links.append({
+                "index": action.get(
+                    "id"
+                ),
+                "text": action.get(
+                    "text",
+                    "",
+                ),
+                "href": action.get(
+                    "href",
+                    "",
+                ),
+                "aria_label": action.get(
+                    "aria_label",
+                    "",
+                ),
+                "title": action.get(
+                    "title",
+                    "",
+                ),
+                "kind": action.get(
+                    "kind",
+                    "link",
+                ),
+            })
 
         return {
             "ok": True,
             "title": title,
             "url": url,
             "domain": domain,
+            "description": structure.get(
+                "description",
+                "",
+            ),
+            "headings": structure.get(
+                "headings",
+                [],
+            ),
             "text": text,
             "links": links,
         }
+
+    # ========================================================
+    # ACTION SAFETY
+    # ========================================================
+
+    @staticmethod
+    def _is_consequential_target(
+        target,
+    ):
+        """
+        Block obviously consequential actions from
+        semantic clicking.
+
+        Navigation such as "Buy" is allowed.
+        Actual purchase/commit actions are not.
+        """
+
+        normalized = _normalize_click_text(
+            target
+        )
+
+        dangerous_phrases = (
+            "place order",
+            "submit order",
+            "confirm purchase",
+            "confirm order",
+            "pay now",
+            "make payment",
+            "delete account",
+            "delete permanently",
+            "remove account",
+            "cancel subscription",
+            "sign out all",
+        )
+
+        return any(
+            phrase in normalized
+            for phrase in dangerous_phrases
+        )
+
+    # ========================================================
+    # ACTION MATCHING
+    # ========================================================
+
+    def _find_action_by_target(
+        self,
+        target,
+    ):
+
+        if (
+            self._page is None
+            or self._page.is_closed()
+        ):
+            return None
+
+        target_normalized = (
+            _normalize_click_text(
+                target
+            )
+        )
+
+        if not target_normalized:
+            return None
+
+        try:
+
+            structure = (
+                self._extract_page_structure()
+            )
+
+            actions = structure.get(
+                "actions",
+                [],
+            )
+
+        except Exception:
+
+            actions = []
+
+        best = None
+        best_score = 0
+
+        target_tokens = set(
+            target_normalized.split()
+        )
+
+        for action in actions:
+
+            if not isinstance(
+                action,
+                dict,
+            ):
+                continue
+
+            fields = [
+                action.get(
+                    "text",
+                    "",
+                ),
+                action.get(
+                    "aria_label",
+                    "",
+                ),
+                action.get(
+                    "title",
+                    "",
+                ),
+            ]
+
+            combined = " ".join(
+                str(field or "")
+                for field in fields
+            )
+
+            normalized = (
+                _normalize_click_text(
+                    combined
+                )
+            )
+
+            if not normalized:
+                continue
+
+            score = 0
+
+            if (
+                normalized
+                == target_normalized
+            ):
+                score += 100
+
+            if (
+                target_normalized
+                in normalized
+            ):
+                score += 60
+
+            if (
+                normalized
+                in target_normalized
+            ):
+                score += 35
+
+            tokens = set(
+                normalized.split()
+            )
+
+            overlap = len(
+                target_tokens
+                & tokens
+            )
+
+            score += (
+                overlap * 15
+            )
+
+            if normalized.startswith(
+                target_normalized
+            ):
+                score += 20
+
+            if target_normalized.startswith(
+                normalized
+            ):
+                score += 10
+
+            if score > best_score:
+
+                best_score = score
+
+                best = action
+
+        return best
 
     # ========================================================
     # CLICK
@@ -821,7 +1233,262 @@ class BrowserAgent:
 
     def _click_on_worker(
         self,
-        index,
+        index=None,
+        target=None,
+    ):
+
+        if (
+            self._page is None
+            or self._page.is_closed()
+        ):
+
+            return {
+                "ok": False,
+                "error": (
+                    "No controlled browser "
+                    "page is currently open."
+                ),
+            }
+
+        chosen_index = None
+        chosen_target = None
+
+        # ----------------------------------------------------
+        # Semantic target.
+        # ----------------------------------------------------
+
+        if (
+            target is not None
+            and str(target).strip()
+        ):
+
+            target = str(
+                target
+            ).strip()
+
+            if self._is_consequential_target(
+                target
+            ):
+
+                return {
+                    "ok": False,
+                    "error": (
+                        "That action appears "
+                        "consequential and requires "
+                        "confirmation before clicking."
+                    ),
+                }
+
+            action = (
+                self._find_action_by_target(
+                    target
+                )
+            )
+
+            if not action:
+
+                return {
+                    "ok": False,
+                    "error": (
+                        f"I could not find a visible "
+                        f"clickable element matching "
+                        f"'{target}'."
+                    ),
+                }
+
+            chosen_index = action.get(
+                "id"
+            )
+
+            chosen_target = target
+
+            print(
+                "[BROWSER] Semantic click matched:",
+                target,
+                "->",
+                action,
+            )
+
+        # ----------------------------------------------------
+        # Numeric index.
+        # ----------------------------------------------------
+
+        else:
+
+            try:
+                chosen_index = int(
+                    index
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+
+                return {
+                    "ok": False,
+                    "error": (
+                        "Invalid browser action index."
+                    ),
+                }
+
+        if (
+            chosen_index is None
+        ):
+
+            return {
+                "ok": False,
+                "error": (
+                    "No browser action was selected."
+                ),
+            }
+
+        try:
+
+            selector = (
+                '[data-jarvis-action-id="'
+                f'{chosen_index}'
+                '"]'
+            )
+
+            element = self._page.locator(
+                selector
+            ).first
+
+            if not element.is_visible():
+
+                return {
+                    "ok": False,
+                    "error": (
+                        "That browser element is "
+                        "no longer visible."
+                    ),
+                }
+
+            clicked_text = (
+                element.inner_text(
+                    timeout=1000
+                ).strip()
+            )
+
+            if not clicked_text:
+
+                clicked_text = (
+                    element.get_attribute(
+                        "aria-label"
+                    )
+                    or element.get_attribute(
+                        "title"
+                    )
+                    or ""
+                ).strip()
+
+            clicked_href = (
+                element.get_attribute(
+                    "href"
+                )
+                or ""
+            )
+
+            print(
+                "[BROWSER] Clicking action:",
+                chosen_index,
+                clicked_text,
+            )
+
+            before_pages = (
+                list(
+                    self._context.pages
+                )
+                if self._context
+                else []
+            )
+
+            element.scroll_into_view_if_needed()
+
+            element.click(
+                timeout=10000
+            )
+
+            # If the click opened a new tab/window,
+            # continue with that page.
+            if self._context:
+
+                after_pages = list(
+                    self._context.pages
+                )
+
+                if len(after_pages) > len(
+                    before_pages
+                ):
+
+                    self._page = (
+                        after_pages[-1]
+                    )
+
+            try:
+
+                self._page.wait_for_load_state(
+                    "domcontentloaded",
+                    timeout=10000,
+                )
+
+            except Exception:
+                pass
+
+            try:
+
+                self._page.wait_for_load_state(
+                    "networkidle",
+                    timeout=3000,
+                )
+
+            except Exception:
+                pass
+
+            result = (
+                self._observe_on_worker()
+            )
+
+            result[
+                "clicked_index"
+            ] = chosen_index
+
+            result[
+                "clicked_text"
+            ] = clicked_text
+
+            result[
+                "clicked_href"
+            ] = clicked_href
+
+            if chosen_target:
+                result[
+                    "clicked_target"
+                ] = chosen_target
+
+            return result
+
+        except Exception as e:
+
+            print(
+                "[BROWSER CLICK ERROR]",
+                repr(e),
+            )
+
+            return {
+                "ok": False,
+                "error": (
+                    f"Could not click that "
+                    f"browser element: {e}"
+                ),
+            }
+
+    # ========================================================
+    # BACK
+    # ========================================================
+
+    def _back_on_worker(
+        self,
     ):
 
         if (
@@ -839,127 +1506,11 @@ class BrowserAgent:
 
         try:
 
-            index = int(index)
-
-        except Exception:
-
-            return {
-                "ok": False,
-                "error": (
-                    "Invalid browser link index."
-                ),
-            }
-
-        if (
-            index < 0
-            or index >= len(
-                self._last_link_map
-            )
-        ):
-
-            return {
-                "ok": False,
-                "error": (
-                    "That link index is not "
-                    "available in the current "
-                    "browser observation."
-                ),
-            }
-
-        raw_index = (
-            self._last_link_map[index]
-        )
-
-        print(
-            "[BROWSER] Clicking visible index:",
-            index,
-            "DOM index:",
-            raw_index,
-        )
-
-        try:
-
-            anchor = (
-                self._page.locator(
-                    "a"
-                ).nth(
-                    raw_index
+            result = (
+                self._page.go_back(
+                    wait_until="domcontentloaded",
+                    timeout=15000,
                 )
-            )
-
-            anchor.scroll_into_view_if_needed()
-
-            anchor.click(
-                timeout=10000
-            )
-
-            try:
-
-                self._page.wait_for_load_state(
-                    "domcontentloaded",
-                    timeout=10000,
-                )
-
-            except Exception:
-                pass
-
-            result = self._observe_on_worker()
-
-            result["clicked_index"] = index
-
-            result["clicked_text"] = (
-                anchor.inner_text(
-                    timeout=1000
-                ).strip()
-            )
-
-            result["clicked_href"] = (
-                anchor.get_attribute(
-                    "href"
-                )
-                or ""
-            )
-
-            return result
-
-        except Exception as e:
-
-            print(
-                "[BROWSER CLICK ERROR]",
-                repr(e),
-            )
-
-            return {
-                "ok": False,
-                "error": (
-                    f"Could not click that link: {e}"
-                ),
-            }
-
-    # ========================================================
-    # BACK
-    # ========================================================
-
-    def _back_on_worker(self):
-
-        if (
-            self._page is None
-            or self._page.is_closed()
-        ):
-
-            return {
-                "ok": False,
-                "error": (
-                    "No controlled browser "
-                    "page is currently open."
-                ),
-            }
-
-        try:
-
-            result = self._page.go_back(
-                wait_until="domcontentloaded",
-                timeout=15000,
             )
 
             if result is None:
@@ -972,7 +1523,9 @@ class BrowserAgent:
                     ),
                 }
 
-            return self._observe_on_worker()
+            return (
+                self._observe_on_worker()
+            )
 
         except Exception as e:
 
@@ -992,7 +1545,9 @@ class BrowserAgent:
     # FORWARD
     # ========================================================
 
-    def _forward_on_worker(self):
+    def _forward_on_worker(
+        self,
+    ):
 
         if (
             self._page is None
@@ -1009,9 +1564,11 @@ class BrowserAgent:
 
         try:
 
-            result = self._page.go_forward(
-                wait_until="domcontentloaded",
-                timeout=15000,
+            result = (
+                self._page.go_forward(
+                    wait_until="domcontentloaded",
+                    timeout=15000,
+                )
             )
 
             if result is None:
@@ -1024,7 +1581,9 @@ class BrowserAgent:
                     ),
                 }
 
-            return self._observe_on_worker()
+            return (
+                self._observe_on_worker()
+            )
 
         except Exception as e:
 
@@ -1044,7 +1603,9 @@ class BrowserAgent:
     # STATUS
     # ========================================================
 
-    def _status_on_worker(self):
+    def _status_on_worker(
+        self,
+    ):
 
         page_open = (
             self._page is not None
@@ -1075,7 +1636,9 @@ class BrowserAgent:
     # CLOSE
     # ========================================================
 
-    def _close_on_worker(self):
+    def _close_on_worker(
+        self,
+    ):
 
         self._close_session()
 
@@ -1095,10 +1658,12 @@ browser_agent = BrowserAgent()
 
 
 # ============================================================
-# PUBLIC HELPERS
+# PUBLIC WEBSITE HELPER
 # ============================================================
 
-def open_website(site):
+def open_website(
+    site,
+):
 
     print(
         "[TOOL BROWSER] open_website()",
@@ -1108,7 +1673,9 @@ def open_website(site):
         os.getpid(),
     )
 
-    url = resolve_website(site)
+    url = resolve_website(
+        site
+    )
 
     if not url:
 
@@ -1125,7 +1692,9 @@ def open_website(site):
         url
     )
 
-    if not result.get("ok"):
+    if not result.get(
+        "ok"
+    ):
 
         return (
             "I could not open that website, Sir. "
@@ -1145,12 +1714,19 @@ def open_website(site):
     )
 
 
-def google_search(query):
+# ============================================================
+# GOOGLE SEARCH
+# ============================================================
+
+def google_search(
+    query,
+):
 
     if not query:
 
         return (
-            "Please provide something to search for, Sir."
+            "Please provide something "
+            "to search for, Sir."
         )
 
     query = query.strip()
@@ -1172,10 +1748,13 @@ def google_search(query):
         url
     )
 
-    if not result.get("ok"):
+    if not result.get(
+        "ok"
+    ):
 
         return (
-            "I could not perform the Google search, Sir. "
+            "I could not perform the "
+            "Google search, Sir. "
             + result.get(
                 "error",
                 "Unknown browser error.",

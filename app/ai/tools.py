@@ -1,4 +1,5 @@
 import re
+from urllib.parse import quote_plus
 
 from app.integrations.browser import (
     browser_agent,
@@ -14,35 +15,48 @@ from app.integrations.browser import (
 def tool_get_weather(location):
     """
     Weather placeholder.
-    Keep this function available for the existing tool registry.
     """
-    location = str(location or "").strip()
+
+    location = str(
+        location or ""
+    ).strip()
 
     if not location:
         return {
             "ok": False,
-            "error": "No location provided."
+            "error": "No location provided.",
         }
 
     return {
         "ok": False,
-        "error": f"Weather lookup is not currently available for {location}."
+        "error": (
+            "Weather lookup is not currently "
+            f"available for {location}."
+        ),
     }
 
 
 def tool_open_website(site):
-    site = str(site or "").strip()
+
+    site = str(
+        site or ""
+    ).strip()
 
     if not site:
         return {
             "ok": False,
-            "error": "No website specified."
+            "error": "No website specified.",
         }
 
-    print(f"[TOOL] open_website({site!r})")
+    print(
+        f"[TOOL] open_website({site!r})"
+    )
 
     try:
-        result = open_website(site)
+
+        result = open_website(
+            site
+        )
 
         print(
             f"[TOOL] open_website {site!r} -> "
@@ -52,30 +66,39 @@ def tool_open_website(site):
         return result
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] open_website:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
 def tool_google_search(query):
-    query = str(query or "").strip()
+
+    query = str(
+        query or ""
+    ).strip()
 
     if not query:
         return {
             "ok": False,
-            "error": "No search query provided."
+            "error": "No search query provided.",
         }
 
-    print(f"[TOOL] google_search({query!r})")
+    print(
+        f"[TOOL] google_search({query!r})"
+    )
 
     try:
-        result = google_search(query)
+
+        result = google_search(
+            query
+        )
 
         print(
             f"[TOOL] google_search -> "
@@ -85,14 +108,15 @@ def tool_google_search(query):
         return result
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] google_search:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
@@ -100,7 +124,9 @@ def tool_google_search(query):
 # PRODUCT / YOUTUBE / MEDIA
 # ============================================================
 
-def tool_search_product_price(product):
+def tool_search_product_price(
+    product,
+):
     """
     Search the browser for the exact product phrase.
 
@@ -109,12 +135,14 @@ def tool_search_product_price(product):
     - Never silently correct model numbers.
     """
 
-    product = str(product or "").strip()
+    product = str(
+        product or ""
+    ).strip()
 
     if not product:
         return {
             "ok": False,
-            "error": "No product specified."
+            "error": "No product specified.",
         }
 
     print(
@@ -123,115 +151,161 @@ def tool_search_product_price(product):
     )
 
     try:
-        exact_query = f'"{product}" price'
 
-        result = google_search(exact_query)
+        exact_query = (
+            f'"{product}" price'
+        )
+
+        result = google_search(
+            exact_query
+        )
 
         return result
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] search_product_price:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
-def tool_search_youtube(query):
-    query = str(query or "").strip()
+def tool_search_youtube(
+    query,
+):
+
+    query = str(
+        query or ""
+    ).strip()
 
     if not query:
         return {
             "ok": False,
-            "error": "No YouTube search query provided."
+            "error": (
+                "No YouTube search query provided."
+            ),
         }
 
-    print(f"[TOOL] search_youtube({query!r})")
+    print(
+        f"[TOOL] search_youtube({query!r})"
+    )
 
     try:
+
+        url = (
+            "https://www.youtube.com/results"
+            "?search_query="
+            + quote_plus(query)
+        )
+
         result = browser_agent.open(
-            "https://www.youtube.com/results?search_query="
-            + query.replace(" ", "+")
+            url
         )
 
         return result
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] search_youtube:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
-def tool_play_youtube(query):
-    query = str(query or "").strip()
+def tool_play_youtube(
+    query,
+):
+
+    query = str(
+        query or ""
+    ).strip()
 
     if not query:
         return {
             "ok": False,
-            "error": "No video specified."
+            "error": "No video specified.",
         }
 
-    print(f"[TOOL] play_youtube({query!r})")
+    print(
+        f"[TOOL] play_youtube({query!r})"
+    )
 
     try:
+
+        url = (
+            "https://www.youtube.com/results"
+            "?search_query="
+            + quote_plus(query)
+        )
+
         result = browser_agent.open(
-            "https://www.youtube.com/results?search_query="
-            + query.replace(" ", "+")
+            url
         )
 
         return result
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] play_youtube:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
-def tool_media_control(action):
-    action = str(action or "").strip().lower()
+def tool_media_control(
+    action,
+):
+
+    action = str(
+        action or ""
+    ).strip().lower()
 
     if not action:
         return {
             "ok": False,
-            "error": "No media action provided."
+            "error": (
+                "No media action provided."
+            ),
         }
 
-    print(f"[TOOL] media_control({action!r})")
+    print(
+        f"[TOOL] media_control({action!r})"
+    )
 
-    # Keep the existing media command contract simple.
     return {
         "ok": True,
         "action": action,
-        "message": f"Media action received: {action}"
+        "message": (
+            f"Media action received: {action}"
+        ),
     }
 
 
 # ============================================================
-# BROWSER OBSERVATION
+# BROWSER TEXT CLEANING
 # ============================================================
 
-def _clean_browser_text(text):
+def _clean_browser_text(
+    text,
+):
     """
-    Clean browser text before sending it to the AI.
-
-    Removes common browser/page noise while preserving useful
-    product, pricing, specification and descriptive content.
+    Remove obvious webpage noise while preserving
+    useful product, specification and descriptive text.
     """
 
     if not text:
@@ -239,13 +313,20 @@ def _clean_browser_text(text):
 
     text = str(text)
 
-    # Normalize whitespace.
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(
+        r"[ \t]+",
+        " ",
+        text,
+    )
+
+    text = re.sub(
+        r"\n{3,}",
+        "\n\n",
+        text,
+    )
 
     lines = []
 
-    # Common navigation / UI noise.
     noise_exact = {
         "menu",
         "close",
@@ -260,14 +341,13 @@ def _clean_browser_text(text):
         "home",
         "skip to content",
         "skip to main content",
-        "learn more",
-        "read more",
         "cookie settings",
         "privacy",
         "terms",
     }
 
     for raw_line in text.splitlines():
+
         line = raw_line.strip()
 
         if not line:
@@ -278,7 +358,6 @@ def _clean_browser_text(text):
         if lower in noise_exact:
             continue
 
-        # Ignore obvious URL-only lines.
         if re.fullmatch(
             r"(?:https?://|www\.)\S+",
             line,
@@ -286,37 +365,59 @@ def _clean_browser_text(text):
         ):
             continue
 
-        # Ignore extremely long technical URL-like strings.
         if (
             "://" in line
-            and len(line) > 80
+            and len(line) > 100
         ):
             continue
 
-        # Ignore giant repeated navigation strings.
         if len(line) > 500:
-            line = line[:500].rstrip() + "..."
+            line = (
+                line[:500]
+                .rstrip()
+                + "..."
+            )
 
-        lines.append(line)
+        lines.append(
+            line
+        )
 
-    # Remove immediate duplicates.
     deduped = []
 
     for line in lines:
-        if deduped and line == deduped[-1]:
+
+        if (
+            deduped
+            and line == deduped[-1]
+        ):
             continue
 
-        deduped.append(line)
+        deduped.append(
+            line
+        )
 
-    return "\n".join(deduped)
+    return "\n".join(
+        deduped
+    )
 
 
-def _score_browser_line(line):
+# ============================================================
+# BROWSER RELEVANCE SCORING
+# ============================================================
+
+def _score_browser_line(
+    line,
+):
     """
-    Give useful page content a higher priority.
+    Score information-rich page content.
 
-    This lets us keep product/pricing/specification information
-    while dropping generic page boilerplate.
+    Higher scores mean:
+    - product names
+    - prices
+    - specifications
+    - availability
+    - reviews
+    - comparisons
     """
 
     lower = line.lower()
@@ -343,6 +444,7 @@ def _score_browser_line(line):
         "price",
         "from $",
         "from €",
+        "from £",
         "$",
         "€",
         "£",
@@ -377,9 +479,8 @@ def _score_browser_line(line):
         "cores",
         "chip",
 
-        # Reviews / evaluation
+        # Reviews
         "review",
-        "rating",
         "rating",
         "pros",
         "cons",
@@ -389,27 +490,31 @@ def _score_browser_line(line):
     )
 
     for keyword in keywords:
+
         if keyword in lower:
             score += 3
 
-    # Headings and short descriptive sentences are useful.
     if len(line) <= 120:
         score += 1
 
-    # Very short fragments are usually navigation.
     if len(line) < 8:
         score -= 2
 
     return score
 
 
-def _compact_browser_text(text, max_chars=2200):
+def _compact_browser_text(
+    text,
+    max_chars=2200,
+):
     """
-    Keep the most useful page information without dumping the
-    entire webpage into the model.
+    Keep the most useful browser content while
+    preserving original page order.
     """
 
-    cleaned = _clean_browser_text(text)
+    cleaned = _clean_browser_text(
+        text
+    )
 
     if not cleaned:
         return ""
@@ -423,82 +528,134 @@ def _compact_browser_text(text, max_chars=2200):
     if not lines:
         return ""
 
-    # Preserve original order while calculating relevance.
+    if len(cleaned) <= max_chars:
+        return cleaned
+
     scored = []
 
-    for index, line in enumerate(lines):
+    for index, line in enumerate(
+        lines
+    ):
+
         scored.append(
             (
-                _score_browser_line(line),
+                _score_browser_line(
+                    line
+                ),
                 index,
                 line,
             )
         )
 
-    # Highest-value lines first.
     ranked = sorted(
         scored,
         key=lambda item: (
             -item[0],
             item[1],
-        )
+        ),
     )
 
     selected_indexes = set()
+
     current_chars = 0
 
-    # Always preserve the beginning of the page because it
-    # often contains the main title/product description.
+    # Preserve beginning of page.
     for index in range(
         min(8, len(lines))
     ):
+
         line = lines[index]
 
         if (
-            current_chars + len(line) + 1
+            current_chars
+            + len(line)
+            + 1
             <= max_chars
         ):
-            selected_indexes.add(index)
-            current_chars += len(line) + 1
 
-    # Add relevant lines until the compact budget is reached.
-    for score, index, line in ranked:
+            selected_indexes.add(
+                index
+            )
+
+            current_chars += (
+                len(line)
+                + 1
+            )
+
+    # Add useful information.
+    for (
+        score,
+        index,
+        line,
+    ) in ranked:
+
         if index in selected_indexes:
             continue
 
         if score <= 0:
             continue
 
+        required = (
+            len(line)
+            + 1
+        )
+
         if (
-            current_chars + len(line) + 1
+            current_chars
+            + required
             > max_chars
         ):
             continue
 
-        selected_indexes.add(index)
-        current_chars += len(line) + 1
+        selected_indexes.add(
+            index
+        )
+
+        current_chars += required
 
         if current_chars >= max_chars:
             break
 
-    # Restore webpage order.
     selected = [
         lines[index]
-        for index in sorted(selected_indexes)
+        for index in sorted(
+            selected_indexes
+        )
     ]
 
-    result = "\n".join(selected)
+    result = "\n".join(
+        selected
+    )
 
     if len(result) > max_chars:
-        result = result[:max_chars].rstrip() + "..."
+        result = (
+            result[:max_chars]
+            .rstrip()
+            + "..."
+        )
 
     return result
 
 
-def _compact_browser_links(links, max_links=12):
+# ============================================================
+# BROWSER ACTION COMPACTION
+# ============================================================
+
+def _compact_browser_links(
+    links,
+    max_links=18,
+):
     """
-    Keep useful navigation links but never expose raw URLs to the AI
-    unless the tool specifically needs them internally.
+    Preserve useful visible actions.
+
+    The browser engine now returns:
+    - links
+    - buttons
+    - action labels
+    - visible text
+
+    Only labels are exposed to the AI-facing snapshot.
+    Raw hrefs remain internal.
     """
 
     if not links:
@@ -518,21 +675,29 @@ def _compact_browser_links(links, max_links=12):
         "overview",
         "features",
         "support",
+        "learn",
+        "next",
+        "previous",
+        "continue",
+        "download",
     )
 
     selected = []
 
-    # First collect useful links.
+    # First collect highly useful actions.
     for link in links:
-        if not isinstance(link, dict):
+
+        if not isinstance(
+            link,
+            dict,
+        ):
             continue
 
         text = str(
-            link.get("text", "")
-        ).strip()
-
-        href = str(
-            link.get("href", "")
+            link.get(
+                "text",
+                "",
+            )
         ).strip()
 
         if not text:
@@ -544,41 +709,47 @@ def _compact_browser_links(links, max_links=12):
             word in lower
             for word in useful_words
         ):
+
             selected.append(
-                {
-                    "text": text,
-                    "href": href,
-                }
+                link
             )
 
-    # Then fill remaining slots.
+    # Fill remaining slots.
     if len(selected) < max_links:
+
         for link in links:
-            if not isinstance(link, dict):
+
+            if not isinstance(
+                link,
+                dict,
+            ):
                 continue
 
             text = str(
-                link.get("text", "")
-            ).strip()
-
-            href = str(
-                link.get("href", "")
+                link.get(
+                    "text",
+                    "",
+                )
             ).strip()
 
             if not text:
                 continue
 
-            if any(
-                item.get("text") == text
+            existing_indexes = {
+                item.get(
+                    "index"
+                )
                 for item in selected
+            }
+
+            if (
+                link.get("index")
+                in existing_indexes
             ):
                 continue
 
             selected.append(
-                {
-                    "text": text,
-                    "href": href,
-                }
+                link
             )
 
             if len(selected) >= max_links:
@@ -587,64 +758,75 @@ def _compact_browser_links(links, max_links=12):
     return selected[:max_links]
 
 
-def _format_browser_observation(result):
-    """
-    Convert the raw browser observation into a compact,
-    conversational AI-facing representation.
+# ============================================================
+# BROWSER OBSERVATION FORMAT
+# ============================================================
 
-    IMPORTANT:
-    The complete URL remains available internally through the
-    browser tool, but is deliberately NOT included in the
-    conversational snapshot.
+def _format_browser_observation(
+    result,
+):
+    """
+    Convert the browser engine's structured observation
+    into a compact AI-facing snapshot.
+
+    Full URLs are deliberately excluded.
     """
 
-    if not isinstance(result, dict):
+    if not isinstance(
+        result,
+        dict,
+    ):
         return str(result)
 
-    if not result.get("ok", True):
+    if not result.get(
+        "ok",
+        True,
+    ):
+
         return str(
             result.get(
                 "error",
-                "Browser observation failed."
+                "Browser observation failed.",
             )
         )
 
     title = str(
-        result.get("title", "")
-    ).strip()
-
-    url = str(
-        result.get("url", "")
+        result.get(
+            "title",
+            "",
+        )
     ).strip()
 
     domain = str(
-        result.get("domain", "")
+        result.get(
+            "domain",
+            "",
+        )
     ).strip()
 
+    description = str(
+        result.get(
+            "description",
+            "",
+        )
+    ).strip()
+
+    headings = result.get(
+        "headings",
+        [],
+    )
+
     text = str(
-        result.get("text", "")
+        result.get(
+            "text",
+            "",
+        )
     )
 
     links = result.get(
         "links",
-        []
+        [],
     )
-
-    # --------------------------------------------------------
-    # Human-readable site name.
-    # --------------------------------------------------------
-
-    readable_domain = domain
-
-    if readable_domain.lower().startswith("www."):
-        readable_domain = readable_domain[4:]
-
-    # Remove unnecessary port.
-    readable_domain = readable_domain.split(":")[0]
-
-    # --------------------------------------------------------
-    # Compact page content.
-    # --------------------------------------------------------
 
     compact_text = _compact_browser_text(
         text,
@@ -653,7 +835,7 @@ def _format_browser_observation(result):
 
     compact_links = _compact_browser_links(
         links,
-        max_links=12,
+        max_links=18,
     )
 
     parts = []
@@ -663,10 +845,52 @@ def _format_browser_observation(result):
             f"Page: {title}"
         )
 
-    if readable_domain:
+    if domain:
+        readable_domain = domain
+
+        if readable_domain.lower().startswith(
+            "www."
+        ):
+            readable_domain = (
+                readable_domain[4:]
+            )
+
+        readable_domain = (
+            readable_domain
+            .split(":")[0]
+        )
+
         parts.append(
             f"Website: {readable_domain}"
         )
+
+    if description:
+        parts.append(
+            "\nPage description:\n"
+            + description[:500]
+        )
+
+    if headings:
+        heading_lines = []
+
+        for heading in headings[:12]:
+
+            heading = str(
+                heading
+            ).strip()
+
+            if heading:
+                heading_lines.append(
+                    f"- {heading}"
+                )
+
+        if heading_lines:
+            parts.append(
+                "\nHeadings:\n"
+                + "\n".join(
+                    heading_lines
+                )
+            )
 
     if compact_text:
         parts.append(
@@ -675,189 +899,335 @@ def _format_browser_observation(result):
         )
 
     if compact_links:
-        link_lines = []
+
+        action_lines = []
 
         for link in compact_links:
-            text_value = link.get(
-                "text",
-                ""
-            ).strip()
 
-            if text_value:
-                link_lines.append(
-                    f"- {text_value}"
-                )
-
-        if link_lines:
-            parts.append(
-                "\nUseful page links:\n"
-                + "\n".join(link_lines)
+            index = link.get(
+                "index"
             )
 
-    # Keep the exact URL available only inside this function's
-    # internal data path. Do NOT append it to the AI text.
-    #
-    # `url` intentionally unused here.
-    _ = url
+            text_value = str(
+                link.get(
+                    "text",
+                    "",
+                )
+            ).strip()
 
-    return "\n".join(parts)
+            kind = str(
+                link.get(
+                    "kind",
+                    "link",
+                )
+            ).strip()
+
+            aria = str(
+                link.get(
+                    "aria_label",
+                    "",
+                )
+            ).strip()
+
+            if not text_value and aria:
+                text_value = aria
+
+            if not text_value:
+                continue
+
+            if index is None:
+                action_lines.append(
+                    f"- {kind}: {text_value}"
+                )
+            else:
+                action_lines.append(
+                    f"- [{index}] "
+                    f"{kind}: {text_value}"
+                )
+
+        if action_lines:
+            parts.append(
+                "\nVisible clickable elements:\n"
+                + "\n".join(
+                    action_lines
+                )
+            )
+
+    return "\n".join(
+        parts
+    )
 
 
 # ============================================================
 # BROWSER TOOLS
 # ============================================================
 
-def tool_browser_open(url):
-    url = str(url or "").strip()
+def tool_browser_open(
+    url,
+):
+
+    url = str(
+        url or ""
+    ).strip()
 
     if not url:
         return {
             "ok": False,
-            "error": "No URL provided."
+            "error": "No URL provided.",
         }
 
-    print(f"[TOOL] browser_open({url!r})")
+    print(
+        f"[TOOL] browser_open({url!r})"
+    )
 
     try:
-        result = browser_agent.open(url)
+
+        result = browser_agent.open(
+            url
+        )
 
         return _format_browser_observation(
             result
         )
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] browser_open:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
 def tool_browser_observe():
-    print("[TOOL] browser_observe()")
+
+    print(
+        "[TOOL] browser_observe()"
+    )
 
     try:
+
         result = browser_agent.observe()
 
-        formatted = _format_browser_observation(
-            result
+        formatted = (
+            _format_browser_observation(
+                result
+            )
         )
 
         return formatted
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] browser_observe:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
-def tool_browser_click(index):
-    try:
-        index = int(index)
-    except (
-        TypeError,
-        ValueError,
+def tool_browser_click(
+    index=None,
+    target=None,
+):
+    """
+    Smart browser click.
+
+    Modes:
+
+        browser_click(index=5)
+
+        browser_click(target="Buy")
+
+        browser_click(
+            target="Tech Specs"
+        )
+
+    Index remains fully supported.
+    Target performs semantic matching against
+    currently visible links/buttons.
+    """
+
+    if (
+        index is None
+        and not str(
+            target or ""
+        ).strip()
     ):
         return {
             "ok": False,
-            "error": "Browser link index must be an integer."
+            "error": (
+                "Provide either a browser "
+                "link index or a visible target."
+            ),
         }
+
+    if index is not None:
+
+        try:
+            index = int(index)
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return {
+                "ok": False,
+                "error": (
+                    "Browser link index "
+                    "must be an integer."
+                ),
+            }
+
+        print(
+            f"[TOOL] browser_click(index={index})"
+        )
+
+        try:
+
+            result = browser_agent.click(
+                index=index
+            )
+
+            return (
+                _format_browser_observation(
+                    result
+                )
+            )
+
+        except Exception as e:
+
+            print(
+                "[TOOL ERROR] browser_click:",
+                repr(e),
+            )
+
+            return {
+                "ok": False,
+                "error": str(e),
+            }
+
+    target = str(
+        target or ""
+    ).strip()
 
     print(
         f"[TOOL] browser_click("
-        f"{index})"
+        f"target={target!r})"
     )
 
     try:
-        result = browser_agent.click(index)
 
-        return _format_browser_observation(
-            result
+        result = browser_agent.click(
+            target=target
+        )
+
+        return (
+            _format_browser_observation(
+                result
+            )
         )
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] browser_click:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
 def tool_browser_back():
-    print("[TOOL] browser_back()")
+
+    print(
+        "[TOOL] browser_back()"
+    )
 
     try:
+
         result = browser_agent.back()
 
-        return _format_browser_observation(
-            result
+        return (
+            _format_browser_observation(
+                result
+            )
         )
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] browser_back:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
 def tool_browser_forward():
-    print("[TOOL] browser_forward()")
+
+    print(
+        "[TOOL] browser_forward()"
+    )
 
     try:
+
         result = browser_agent.forward()
 
-        return _format_browser_observation(
-            result
+        return (
+            _format_browser_observation(
+                result
+            )
         )
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] browser_forward:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
 def tool_browser_close():
-    print("[TOOL] browser_close()")
+
+    print(
+        "[TOOL] browser_close()"
+    )
 
     try:
+
         result = browser_agent.close()
 
         return result
 
     except Exception as e:
+
         print(
             "[TOOL ERROR] browser_close:",
-            repr(e)
+            repr(e),
         )
 
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 
@@ -866,6 +1236,7 @@ def tool_browser_close():
 # ============================================================
 
 TOOLS = [
+
     {
         "type": "function",
         "name": "get_weather",
@@ -883,7 +1254,7 @@ TOOLS = [
                 },
             },
             "required": [
-                "location"
+                "location",
             ],
         },
     },
@@ -892,7 +1263,8 @@ TOOLS = [
         "type": "function",
         "name": "open_website",
         "description": (
-            "Open a known website in the controlled browser."
+            "Open a known website in the "
+            "controlled browser."
         ),
         "parameters": {
             "type": "object",
@@ -905,7 +1277,7 @@ TOOLS = [
                 },
             },
             "required": [
-                "site"
+                "site",
             ],
         },
     },
@@ -927,7 +1299,7 @@ TOOLS = [
                 },
             },
             "required": [
-                "query"
+                "query",
             ],
         },
     },
@@ -936,8 +1308,9 @@ TOOLS = [
         "type": "function",
         "name": "search_product_price",
         "description": (
-            "Search for the price of an exact product. "
-            "Preserve the user's exact product name and model."
+            "Search for the price of an exact "
+            "product. Preserve the user's exact "
+            "product name and model."
         ),
         "parameters": {
             "type": "object",
@@ -945,12 +1318,13 @@ TOOLS = [
                 "product": {
                     "type": "string",
                     "description": (
-                        "Exact product name/model from the user."
+                        "Exact product name/model "
+                        "from the user."
                     ),
                 },
             },
             "required": [
-                "product"
+                "product",
             ],
         },
     },
@@ -972,7 +1346,7 @@ TOOLS = [
                 },
             },
             "required": [
-                "query"
+                "query",
             ],
         },
     },
@@ -994,7 +1368,7 @@ TOOLS = [
                 },
             },
             "required": [
-                "query"
+                "query",
             ],
         },
     },
@@ -1017,7 +1391,7 @@ TOOLS = [
                 },
             },
             "required": [
-                "action"
+                "action",
             ],
         },
     },
@@ -1026,7 +1400,8 @@ TOOLS = [
         "type": "function",
         "name": "browser_open",
         "description": (
-            "Open an arbitrary URL in the controlled browser."
+            "Open an arbitrary URL in the "
+            "controlled browser."
         ),
         "parameters": {
             "type": "object",
@@ -1039,7 +1414,7 @@ TOOLS = [
                 },
             },
             "required": [
-                "url"
+                "url",
             ],
         },
     },
@@ -1049,9 +1424,11 @@ TOOLS = [
         "name": "browser_observe",
         "description": (
             "Inspect the currently open webpage. "
-            "Use this when the user asks what is on the current page, "
-            "asks whether they should buy something shown on the page, "
-            "or asks about visible page content."
+            "Returns the page title, website, headings, "
+            "important content, prices/specifications, "
+            "and visible clickable elements with indexes. "
+            "Use this when the user asks about the current "
+            "page or wants analysis of something visible."
         ),
         "parameters": {
             "type": "object",
@@ -1064,8 +1441,13 @@ TOOLS = [
         "type": "function",
         "name": "browser_click",
         "description": (
-            "Click a visible browser link using its index from "
-            "the latest browser observation."
+            "Click a visible element in the controlled browser. "
+            "Prefer the numeric index from the latest "
+            "browser_observe result when available. "
+            "You may also provide target text such as "
+            "'Buy', 'Tech Specs', 'Compare', or 'Learn more' "
+            "for semantic clicking. "
+            "Only target currently visible clickable elements."
         ),
         "parameters": {
             "type": "object",
@@ -1073,13 +1455,19 @@ TOOLS = [
                 "index": {
                     "type": "integer",
                     "description": (
-                        "Visible link index from browser observation."
+                        "Visible clickable-element index "
+                        "from the latest browser observation."
+                    ),
+                },
+                "target": {
+                    "type": "string",
+                    "description": (
+                        "Visible text, aria-label or button/link "
+                        "target to click semantically."
                     ),
                 },
             },
-            "required": [
-                "index"
-            ],
+            "additionalProperties": False,
         },
     },
 
@@ -1087,7 +1475,8 @@ TOOLS = [
         "type": "function",
         "name": "browser_back",
         "description": (
-            "Navigate back one page in the controlled browser."
+            "Navigate back one page in the "
+            "controlled browser."
         ),
         "parameters": {
             "type": "object",
@@ -1100,7 +1489,8 @@ TOOLS = [
         "type": "function",
         "name": "browser_forward",
         "description": (
-            "Navigate forward one page in the controlled browser."
+            "Navigate forward one page in the "
+            "controlled browser."
         ),
         "parameters": {
             "type": "object",
