@@ -1,6 +1,7 @@
 // ============================================================
 // J.A.R.V.I.S. — app.js
 // TRUE STANDBY / WAKE-WORD CONTROL
+// STREAMING RESPONSES
 // ============================================================
 
 const SERVER = "http://127.0.0.1:5000";
@@ -29,7 +30,7 @@ let recognitionStarting = false;
 let recognitionRunning = false;
 let recognitionRestartTimer = null;
 
-// Timer/reminder notifications already spoken in this browser session.
+// Timer/reminder notifications already spoken.
 const spokenTimerEvents = new Map();
 
 // ============================================================
@@ -42,7 +43,7 @@ const LANG = "en-US";
 const WAKE_RE =
   /\b(?:(?:hey|ok|okay)\s+)?(?:jarvis|jarvas|jervis|jarvi|gervais|travis|charvis|jarvus|wake\s+up)\b/gi;
 
-// Sleep commands are handled locally.
+// Sleep commands.
 const SLEEP_RE =
   /\b(?:sleep|go\s+to\s+sleep|go\s+sleep|sleep\s+mode|go\s+offline|stand\s+by|standby|good\s+night|jarvis\s+sleep)\b/gi;
 
@@ -98,7 +99,7 @@ function randomLine(group) {
 
 function removeSilentMetadata(text) {
   return String(text || "")
-    .replace(/\*\*[\s\S]*?\*\*/g, " ")
+    .replace(/\*\*\*[\s\S]*?\*\*\*/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -132,25 +133,16 @@ function normalizeCommand(text) {
     [/\bnote\s+pad\b/g, "notepad"],
     [/\bnote-pad\b/g, "notepad"],
     [/\bnotepadd\b/g, "notepad"],
-
     [/\bcrhome\b/g, "chrome"],
     [/\bchrom\b/g, "chrome"],
-
     [/\byou\s+tube\b/g, "youtube"],
-
     [/\bspot\s+ify\b/g, "spotify"],
     [/\bspotty\s+fy\b/g, "spotify"],
-
     [/\bdis\s+cord\b/g, "discord"],
-
     [/\bcalc\b/g, "calculator"],
-
     [/\btask\s+man\b/g, "task manager"],
-
     [/\bvs\s+code\b/g, "vscode"],
-
     [/\bpower\s+shell\b/g, "powershell"],
-
     [/\bfile\s+explorer\b/g, "file explorer"],
   ];
 
@@ -201,6 +193,7 @@ async function refreshHealth() {
 
     if (data.online) {
       const cpu = document.getElementById("cpu-val");
+
       const mem = document.getElementById("mem-val");
 
       if (cpu) {
@@ -217,6 +210,7 @@ async function refreshHealth() {
 }
 
 refreshHealth();
+
 setInterval(refreshHealth, 5000);
 
 // ============================================================
@@ -285,14 +279,14 @@ function addMsg(role, html) {
   div.className = `msg ${role}`;
 
   div.innerHTML = `
-        <div class="lbl">
-            ${role === "user" ? "YOU" : "JARVIS"}
-        </div>
+    <div class="lbl">
+      ${role === "user" ? "YOU" : "JARVIS"}
+    </div>
 
-        <div class="txt">
-            ${html}
-        </div>
-    `;
+    <div class="txt">
+      ${html}
+    </div>
+  `;
 
   const shouldScroll = isNearBottom();
 
@@ -313,7 +307,6 @@ function showJarvisReply(messageEl, text) {
   const clean = removeSilentMetadata(text);
 
   if (!clean) {
-    console.warn("[JARVIS] Empty reply received.");
     return;
   }
 
@@ -324,13 +317,15 @@ function showJarvisReply(messageEl, text) {
       output.textContent = clean;
 
       output.style.display = "block";
+
       output.style.visibility = "visible";
+
       output.style.opacity = "1";
     } else {
       messageEl.innerHTML = `
-                <div class="lbl">JARVIS</div>
-                <div class="txt"></div>
-            `;
+        <div class="lbl">JARVIS</div>
+        <div class="txt"></div>
+      `;
 
       const newOutput = messageEl.querySelector(".txt");
 
@@ -463,6 +458,7 @@ function drainQueue() {
   }
 
   utterance.onend = drainQueue;
+
   utterance.onerror = drainQueue;
 
   speechSynthesis.speak(utterance);
@@ -481,6 +477,7 @@ function speak(text) {
 
   if (!window.speechSynthesis) {
     setState("ready", "LISTENING");
+
     return;
   }
 
@@ -539,16 +536,152 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ============================================================
+// SSE STREAM READER
+// ============================================================
+
+async function readJarvisStream(response, messageEl) {
+  // Fallback for a non-streaming response.
+  const contentType = response.headers.get("content-type") || "";
+
+  if (!contentType.includes("text/event-stream")) {
+    const data = await response.json();
+
+    const rawReply = data.reply ?? data.response ?? data.text ?? "";
+
+    const reply = removeSilentMetadata(rawReply);
+
+    if (!reply) {
+      throw new Error("The server returned no usable response.");
+    }
+
+    showJarvisReply(messageEl, reply);
+
+    return reply;
+  }
+
+  if (!response.body) {
+    throw new Error("Streaming is not available in this browser.");
+  }
+
+  const reader = response.body.getReader();
+
+  const decoder = new TextDecoder("utf-8");
+
+  let buffer = "";
+  let fullReply = "";
+  let finalReply = "";
+  let streamError = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, {
+      stream: true,
+    });
+
+    while (true) {
+      const separatorIndex = buffer.indexOf("\n\n");
+
+      if (separatorIndex === -1) {
+        break;
+      }
+
+      const eventBlock = buffer.slice(0, separatorIndex);
+
+      buffer = buffer.slice(separatorIndex + 2);
+
+      const lines = eventBlock.split(/\r?\n/);
+
+      let dataText = "";
+
+      for (const line of lines) {
+        if (line.startsWith("data:")) {
+          dataText += line.slice(5).replace(/^\s+/, "");
+        }
+      }
+
+      if (!dataText) {
+        continue;
+      }
+
+      let eventData;
+
+      try {
+        eventData = JSON.parse(dataText);
+      } catch (error) {
+        console.warn("[JARVIS] Invalid stream event:", dataText);
+
+        continue;
+      }
+
+      // ----------------------------------------------
+      // DELTA
+      // ----------------------------------------------
+
+      if (eventData.type === "delta") {
+        const delta = String(eventData.text || "");
+
+        if (!delta) {
+          continue;
+        }
+
+        fullReply += delta;
+
+        // Display immediately.
+        showJarvisReply(messageEl, fullReply);
+      }
+
+      // ----------------------------------------------
+      // DONE
+      // ----------------------------------------------
+      else if (eventData.type === "done") {
+        finalReply = removeSilentMetadata(eventData.reply || fullReply);
+
+        if (finalReply) {
+          showJarvisReply(messageEl, finalReply);
+        }
+      }
+
+      // ----------------------------------------------
+      // ERROR
+      // ----------------------------------------------
+      else if (eventData.type === "error") {
+        streamError = removeSilentMetadata(
+          eventData.error || "Streaming error, Sir.",
+        );
+      }
+    }
+  }
+
+  buffer += decoder.decode();
+
+  if (streamError) {
+    throw new Error(streamError);
+  }
+
+  const reply = finalReply || removeSilentMetadata(fullReply);
+
+  if (!reply) {
+    throw new Error("I received no usable response from the server, Sir.");
+  }
+
+  return reply;
+}
+
+// ============================================================
 // SEND MESSAGE
 // ============================================================
 
 async function sendMessage(text) {
-  const originalText = String(text || "").trim();
-
   text = normalizeCommand(removeSilentMetadata(text));
 
   if (!text) {
     setState("ready", "LISTENING");
+
     return;
   }
 
@@ -565,32 +698,29 @@ async function sendMessage(text) {
   setState("thinking", randomLine("thinking").toUpperCase());
 
   // --------------------------------------------------------
-  // Temporary JARVIS response
+  // Temporary response
   // --------------------------------------------------------
 
   const messageEl = addMsg(
     "jarvis",
     `
-            <span class="typing">
-                <span>.</span>
-                <span>.</span>
-                <span>.</span>
-            </span>
-        `,
+        <span class="typing">
+          <span>.</span>
+          <span>.</span>
+          <span>.</span>
+        </span>
+      `,
   );
 
   try {
     activeRequest = new AbortController();
-
-    // ----------------------------------------------------
-    // SEND TO FLASK
-    // ----------------------------------------------------
 
     const response = await fetch(`${SERVER}/stream`, {
       method: "POST",
 
       headers: {
         "Content-Type": "application/json",
+        Accept: "text/event-stream",
       },
 
       body: JSON.stringify({
@@ -602,13 +732,7 @@ async function sendMessage(text) {
       cache: "no-store",
     });
 
-    activeRequest = null;
-
     console.log("[JARVIS] Server HTTP:", response.status);
-
-    // ----------------------------------------------------
-    // SERVER ERROR
-    // ----------------------------------------------------
 
     if (!response.ok) {
       let serverMessage = `Server returned HTTP ${response.status}.`;
@@ -620,7 +744,7 @@ async function sendMessage(text) {
 
         serverMessage = errorData.reply || errorData.error || serverMessage;
       } catch (e) {
-        console.warn("[JARVIS] Could not parse " + "server error JSON.");
+        console.warn("[JARVIS] Could not parse server error JSON.");
       }
 
       serverMessage = removeSilentMetadata(serverMessage);
@@ -632,79 +756,26 @@ async function sendMessage(text) {
       return;
     }
 
-    // ----------------------------------------------------
-    // SUCCESS
-    // ----------------------------------------------------
+    // ------------------------------------------------------
+    // TRUE STREAMING
+    // ------------------------------------------------------
 
-    const data = await response.json();
-
-    console.log("[JARVIS] Server response:", data);
-
-    // ----------------------------------------------------
-    // SERVER APPLICATION ERROR
-    // ----------------------------------------------------
-
-    if (!data.ok) {
-      const error = removeSilentMetadata(
-        data.reply || data.error || "The server returned an error, Sir.",
-      );
-
-      showJarvisReply(messageEl, error);
-
-      speak(error);
-
-      return;
-    }
-
-    // ----------------------------------------------------
-    // ACTUAL JARVIS REPLY
-    // ----------------------------------------------------
-
-    const rawReply = data.reply ?? data.response ?? data.text ?? "";
-
-    console.log("[JARVIS] Raw reply:", rawReply);
-
-    const reply = removeSilentMetadata(rawReply);
-
-    // ----------------------------------------------------
-    // NEVER TURN A MISSING SERVER REPLY INTO
-    // "Nothing to report."
-    // ----------------------------------------------------
-
-    if (!reply) {
-      console.error("[JARVIS] Empty reply from server.", data);
-
-      const fallback = "I received no usable response from the server, Sir.";
-
-      showJarvisReply(messageEl, fallback);
-
-      speak(fallback);
-
-      return;
-    }
+    const reply = await readJarvisStream(response, messageEl);
 
     console.log("[JARVIS] Final reply:", reply);
 
-    // ----------------------------------------------------
-    // DISPLAY
-    // ----------------------------------------------------
-
-    showJarvisReply(messageEl, reply);
-
-    // ----------------------------------------------------
-    // SPEAK
-    // ----------------------------------------------------
+    // ------------------------------------------------------
+    // SPEAK ONLY AFTER COMPLETE RESPONSE
+    // ------------------------------------------------------
 
     speak(reply);
 
-    // ----------------------------------------------------
+    // ------------------------------------------------------
     // MEMORY
-    // ----------------------------------------------------
+    // ------------------------------------------------------
 
     refreshMemory();
   } catch (err) {
-    activeRequest = null;
-
     console.error("[JARVIS] Request failed:", err);
 
     let message;
@@ -712,12 +783,16 @@ async function sendMessage(text) {
     if (err.name === "AbortError") {
       message = "Request cancelled, Sir.";
     } else {
-      message = "I couldn't reach the JARVIS server, Sir.";
+      message = err.message || "I couldn't reach the JARVIS server, Sir.";
     }
+
+    message = removeSilentMetadata(message);
 
     showJarvisReply(messageEl, message);
 
     speak(message);
+  } finally {
+    activeRequest = null;
   }
 }
 
@@ -743,7 +818,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null;
 
 // ============================================================
-// BUFFER CONTROL
+// BUFFER
 // ============================================================
 
 function clearSpeechBuffer() {
@@ -759,7 +834,7 @@ function clearSpeechBuffer() {
 }
 
 // ============================================================
-// WAKE DETECTION
+// WAKE
 // ============================================================
 
 function containsWakeWord(text) {
@@ -781,7 +856,7 @@ function removeWakeWord(text) {
 }
 
 // ============================================================
-// SLEEP DETECTION
+// SLEEP
 // ============================================================
 
 function containsSleepCommand(text) {
@@ -860,6 +935,7 @@ function abortRecognition() {
   }
 
   recognitionStarting = false;
+
   recognitionRunning = false;
 
   try {
@@ -868,7 +944,7 @@ function abortRecognition() {
 }
 
 // ============================================================
-// ENTER SLEEP
+// SLEEP
 // ============================================================
 
 function goSleep() {
@@ -889,6 +965,7 @@ function goSleep() {
   abortRecognition();
 
   speakQueue.length = 0;
+
   queueRunning = false;
 
   if (window.speechSynthesis) {
@@ -934,6 +1011,7 @@ function goSleep() {
   };
 
   goodbye.onend = finished;
+
   goodbye.onerror = finished;
 
   speechSynthesis.speak(goodbye);
@@ -951,22 +1029,15 @@ if (SR) {
   rec.maxAlternatives = 3;
   rec.lang = LANG;
 
-  // ----------------------------------------------------------
-  // START
-  // ----------------------------------------------------------
-
   rec.onstart = () => {
     recognitionStarting = false;
+
     recognitionRunning = true;
 
     console.log(
       activated ? "Command recognition ready." : "Wake-word recognition ready.",
     );
   };
-
-  // ----------------------------------------------------------
-  // RESULT
-  // ----------------------------------------------------------
 
   rec.onresult = (event) => {
     if (isSpeaking) {
@@ -976,6 +1047,7 @@ if (SR) {
     let newFinalText = "";
     let interimText = "";
     let hasFinalResult = false;
+
     let wokeFromStandby = false;
 
     for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -991,9 +1063,9 @@ if (SR) {
         continue;
       }
 
-      // ==================================================
+      // ----------------------------------------------
       // SLEEPING
-      // ==================================================
+      // ----------------------------------------------
 
       if (!activated) {
         if (containsWakeWord(transcript)) {
@@ -1027,14 +1099,13 @@ if (SR) {
             }
           }
         } else {
-          // Sleeping speech is ignored.
           return;
         }
       }
 
-      // ==================================================
+      // ----------------------------------------------
       // AWAKE
-      // ==================================================
+      // ----------------------------------------------
 
       if (result.isFinal) {
         newFinalText += (newFinalText ? " " : "") + transcript;
@@ -1045,17 +1116,13 @@ if (SR) {
       }
     }
 
-    // ------------------------------------------------------
-    // Remove wake word from current result.
-    // ------------------------------------------------------
-
     if (wokeFromStandby && newFinalText) {
       newFinalText = removeWakeWord(newFinalText);
     }
 
-    // ======================================================
+    // ----------------------------------------------
     // SLEEP COMMAND
-    // ======================================================
+    // ----------------------------------------------
 
     if (activated && containsSleepCommand(newFinalText || interimText)) {
       if (hasFinalResult) {
@@ -1065,19 +1132,15 @@ if (SR) {
       return;
     }
 
-    // ======================================================
-    // STORE AWAKE SPEECH ONLY
-    // ======================================================
+    // ----------------------------------------------
+    // STORE AWAKE SPEECH
+    // ----------------------------------------------
 
     if (newFinalText) {
       finalBuffer += (finalBuffer ? " " : "") + newFinalText;
 
       finalBuffer = removeSilentMetadata(finalBuffer);
     }
-
-    // ======================================================
-    // CURRENT AWAKE SPEECH
-    // ======================================================
 
     const combinedText = removeSilentMetadata(
       finalBuffer + (interimText ? " " + interimText : ""),
@@ -1091,17 +1154,9 @@ if (SR) {
       cmdInput.value = combinedText;
     }
 
-    // ======================================================
-    // WAIT FOR FINAL
-    // ======================================================
-
     if (!hasFinalResult) {
       return;
     }
-
-    // ======================================================
-    // FINAL COMMAND
-    // ======================================================
 
     const finalCommand = normalizeCommand(finalBuffer);
 
@@ -1120,12 +1175,9 @@ if (SR) {
     sendMessage(finalCommand);
   };
 
-  // ----------------------------------------------------------
-  // ERROR
-  // ----------------------------------------------------------
-
   rec.onerror = (event) => {
     recognitionStarting = false;
+
     recognitionRunning = false;
 
     console.warn("Speech recognition:", event.error);
@@ -1151,31 +1203,18 @@ if (SR) {
       }
     }
 
-    if (event.error === "aborted" || event.error === "no-speech") {
-      scheduleRecognitionRestart();
-
-      return;
-    }
-
     scheduleRecognitionRestart();
   };
 
-  // ----------------------------------------------------------
-  // END
-  // ----------------------------------------------------------
-
   rec.onend = () => {
     recognitionStarting = false;
+
     recognitionRunning = false;
 
     if (!isSpeaking && mode !== "thinking") {
       scheduleRecognitionRestart();
     }
   };
-
-  // ----------------------------------------------------------
-  // MICROPHONE BUTTON
-  // ----------------------------------------------------------
 
   if (micBtn) {
     micBtn.addEventListener("click", () => {
@@ -1189,18 +1228,11 @@ if (SR) {
     });
   }
 
-  // ----------------------------------------------------------
-  // INITIAL RECOGNITION
-  // ----------------------------------------------------------
-
   setTimeout(startRecognition, 150);
 
   setTimeout(startRecognition, 500);
 
   setTimeout(startRecognition, 1000);
-
-  // First user interaction helps Chrome
-  // initialize microphone permissions.
 
   document.addEventListener(
     "click",
@@ -1333,18 +1365,17 @@ async function refreshMemory() {
     if (data.memory && data.memory.length) {
       memList.innerHTML = data.memory
         .map(
-          (item, index) =>
-            `
-                                <div style="
-                                    padding:2px 0;
-                                    border-bottom:
-                                    1px solid
-                                    rgba(0,234,255,0.06)
-                                ">
-                                    ${index + 1}.
-                                    ${escapeHtml(item)}
-                                </div>
-                            `,
+          (item, index) => `
+              <div style="
+                padding:2px 0;
+                border-bottom:
+                1px solid
+                rgba(0,234,255,0.06)
+              ">
+                ${index + 1}.
+                ${escapeHtml(item)}
+              </div>
+            `,
         )
         .join("");
     } else {
@@ -1442,7 +1473,6 @@ setTimeout(() => {
   setTimeout(() => {
     setState(
       activated ? "ready" : "sleeping",
-
       activated ? "LISTENING" : "STANDBY",
     );
   }, 2200);

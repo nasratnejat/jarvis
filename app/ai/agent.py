@@ -11,14 +11,15 @@ class JarvisAgent:
 
     MAX_TOOL_ROUNDS = 5
 
-    # Conversation history limits.
+    # Batch 4:
+    # Keep only a small, recent context window.
     MAX_CONTEXT_MESSAGES = 6
-    MAX_CONTEXT_CHARS = 3500
+    MAX_CONTEXT_CHARS = 2800
+    MAX_CONTEXT_MESSAGE_CHARS = 900
 
-    # Keep browser analysis compact.
+    # Browser requests get their own compact context.
     MAX_BROWSER_CONTEXT_CHARS = 1800
 
-    # Tools where the tool result itself is enough.
     TERMINAL_TOOLS = {
         "get_weather",
         "open_website",
@@ -67,15 +68,12 @@ class JarvisAgent:
     }
 
     BROWSER_CONTEXT_PATTERNS = (
-        # Direct observation.
         r"\bwhat\s+do\s+you\s+see\b",
         r"\bwhat\s+can\s+you\s+see\b",
         r"\btell\s+me\s+what\s+you\s+see\b",
         r"\bwhat\s+are\s+you\s+seeing\b",
         r"\bwhat\s+is\s+on\s+(?:this|the)\s+(?:page|website|webpage)\b",
         r"\bwhat(?:'s|\s+is)\s+on\s+(?:this|the)\s+(?:page|website|webpage)\b",
-
-        # Current page / browser references.
         r"\bcurrent\s+page\b",
         r"\bcurrent\s+website\b",
         r"\bcurrent\s+webpage\b",
@@ -83,15 +81,11 @@ class JarvisAgent:
         r"\bthis\s+page\b",
         r"\bthis\s+website\b",
         r"\bthis\s+webpage\b",
-
-        # Inspect / analyse.
         r"\binspect\s+(?:this|the)\b",
         r"\banaly[sz]e\s+(?:this|the)\b",
         r"\banalyse\s+(?:this|the)\b",
         r"\blook\s+at\s+(?:this|the)\b",
         r"\blook\s+through\s+(?:this|the)\b",
-
-        # Evaluative requests.
         r"\bshould\s+i\s+buy\s+(?:this|that)\b",
         r"\bshould\s+i\s+purchase\s+(?:this|that)\b",
         r"\bis\s+(?:this|that)\s+worth\s+buying\b",
@@ -99,8 +93,6 @@ class JarvisAgent:
         r"\bwould\s+you\s+buy\s+(?:this|that)\b",
         r"\bdo\s+you\s+recommend\s+(?:this|that)\b",
         r"\bwould\s+you\s+recommend\s+(?:this|that)\b",
-
-        # Opinions.
         r"\bwhat\s+do\s+you\s+think\s+of\s+(?:this|that)\b",
         r"\bwhat\s+do\s+you\s+think\s+about\s+(?:this|that)\b",
         r"\btell\s+me\s+about\s+(?:this|that)\b",
@@ -109,15 +101,11 @@ class JarvisAgent:
         r"\bgive\s+me\s+(?:your\s+)?recommendation(?:s)?\b",
         r"\bgive\s+me\s+your\s+opinion\b",
         r"\bwhat(?:'s|\s+is)\s+your\s+opinion\b",
-
-        # Buying decisions.
         r"\bdo\s+you\s+think\s+i\s+should\s+buy\s+(?:this|that)\b",
         r"\bdo\s+you\s+think\s+i\s+should\s+get\s+(?:this|that)\b",
         r"\bshould\s+i\s+get\s+(?:this|that)\b",
         r"\bshould\s+i\s+order\s+(?:this|that)\b",
         r"\bshould\s+i\s+choose\s+(?:this|that)\b",
-
-        # Generic analysis.
         r"\btell\s+me\s+what\s+you\s+think\s+about\s+(?:this|that)\b",
         r"\bcan\s+you\s+analyse\s+(?:this|that)\b",
         r"\bcan\s+you\s+analyze\s+(?:this|that)\b",
@@ -210,19 +198,6 @@ class JarvisAgent:
         conversation=None,
         context=None,
     ):
-        """
-        Supports both:
-
-            JarvisAgent(provider, conversation)
-
-        and:
-
-            JarvisAgent(
-                provider=provider,
-                context=context,
-            )
-        """
-
         self.provider = provider
 
         if context is not None:
@@ -233,15 +208,11 @@ class JarvisAgent:
             self.conversation = None
 
     # ========================================================
-    # RESPONSE TEXT SAFETY
+    # SAFE TEXT
     # ========================================================
 
     @staticmethod
     def _safe_reply_text(value):
-        """
-        Always convert agent/tool results to plain text.
-        Prevents [object Object] from reaching the frontend.
-        """
 
         if value is None:
             return ""
@@ -256,6 +227,7 @@ class JarvisAgent:
             value,
             dict,
         ):
+
             for key in (
                 "reply",
                 "output_text",
@@ -263,6 +235,7 @@ class JarvisAgent:
                 "message",
                 "content",
             ):
+
                 candidate = value.get(
                     key
                 )
@@ -271,7 +244,10 @@ class JarvisAgent:
                     candidate,
                     str,
                 ):
-                    candidate = candidate.strip()
+
+                    candidate = (
+                        candidate.strip()
+                    )
 
                     if candidate:
                         return candidate
@@ -281,7 +257,6 @@ class JarvisAgent:
                     value,
                     ensure_ascii=False,
                 )
-
             except Exception:
                 return str(value)
 
@@ -289,19 +264,19 @@ class JarvisAgent:
             value,
             list,
         ):
+
             try:
                 return json.dumps(
                     value,
                     ensure_ascii=False,
                 )
-
             except Exception:
                 return str(value)
 
         return str(value)
 
     # ========================================================
-    # WAKE WORD DETECTION
+    # WAKE
     # ========================================================
 
     @classmethod
@@ -309,18 +284,6 @@ class JarvisAgent:
         cls,
         user_message,
     ):
-        """
-        Handles:
-
-            jarvis
-            jarvis jarvis
-            hey jarvis
-            hey jarvis jarvis
-            okay jarvis
-            ok jarvis jarvis
-
-        without an AI request.
-        """
 
         text = str(
             user_message
@@ -346,7 +309,6 @@ class JarvisAgent:
 
         words = text.split()
 
-        # Remove optional acknowledgement prefix.
         if (
             words
             and words[0] in cls.WAKE_PREFIXES
@@ -356,15 +318,13 @@ class JarvisAgent:
         if not words:
             return False
 
-        # Every remaining word must be a known
-        # JARVIS wake-word variant.
         return all(
             word in cls.WAKE_WORDS
             for word in words
         )
 
     # ========================================================
-    # RESPONSES API HELPERS
+    # RESPONSES HELPERS
     # ========================================================
 
     @staticmethod
@@ -430,7 +390,6 @@ class JarvisAgent:
                 arguments = json.loads(
                     arguments
                 )
-
             except Exception:
                 arguments = {}
 
@@ -541,7 +500,7 @@ class JarvisAgent:
         ).strip()
 
     # ========================================================
-    # BROWSER CONTEXT
+    # INTENT
     # ========================================================
 
     @classmethod
@@ -557,19 +516,13 @@ class JarvisAgent:
         if not text:
             return False
 
-        for pattern in cls.BROWSER_CONTEXT_PATTERNS:
-
-            if re.search(
+        return any(
+            re.search(
                 pattern,
                 text,
-            ):
-                return True
-
-        return False
-
-    # ========================================================
-    # TOOL INTENT
-    # ========================================================
+            )
+            for pattern in cls.BROWSER_CONTEXT_PATTERNS
+        )
 
     @classmethod
     def _looks_like_tool_request(
@@ -610,13 +563,14 @@ class JarvisAgent:
             r"\bclose\s+(?:the\s+)?browser\b",
         )
 
-        for pattern in explicit_patterns:
-
-            if re.search(
+        if any(
+            re.search(
                 pattern,
                 text,
-            ):
-                return True
+            )
+            for pattern in explicit_patterns
+        ):
+            return True
 
         if text in cls.TOOL_INTENT_WORDS:
             return True
@@ -628,15 +582,14 @@ class JarvisAgent:
             )
         )
 
-        if words.intersection(
-            cls.TOOL_INTENT_WORDS
-        ):
-            return True
-
-        return False
+        return bool(
+            words.intersection(
+                cls.TOOL_INTENT_WORDS
+            )
+        )
 
     # ========================================================
-    # LOCAL ROUTER HELPERS
+    # LOCAL ROUTER
     # ========================================================
 
     @classmethod
@@ -658,38 +611,28 @@ class JarvisAgent:
             target,
         ).strip().lower()
 
-        # apple com -> apple.com
-        match = re.fullmatch(
-            r"([a-z0-9-]+)\s+com",
-            normalized,
+        patterns = (
+            ("com", ".com"),
+            ("org", ".org"),
+            ("io", ".io"),
+            ("tv", ".tv"),
+            ("co", ".co"),
         )
 
-        if match:
-            normalized = (
-                f"{match.group(1)}.com"
+        for suffix_word, suffix in patterns:
+
+            match = re.fullmatch(
+                rf"([a-z0-9-]+)\s+{suffix_word}",
+                normalized,
             )
 
-        # github io -> github.io
-        match = re.fullmatch(
-            r"([a-z0-9-]+)\s+io",
-            normalized,
-        )
+            if match:
 
-        if match:
-            normalized = (
-                f"{match.group(1)}.io"
-            )
+                normalized = (
+                    f"{match.group(1)}{suffix}"
+                )
 
-        # python org -> python.org
-        match = re.fullmatch(
-            r"([a-z0-9-]+)\s+org",
-            normalized,
-        )
-
-        if match:
-            normalized = (
-                f"{match.group(1)}.org"
-            )
+                break
 
         return normalized
 
@@ -710,10 +653,6 @@ class JarvisAgent:
             ),
         )
 
-    # ========================================================
-    # LOCAL FAST ROUTER
-    # ========================================================
-
     @classmethod
     def _local_route(
         cls,
@@ -733,23 +672,18 @@ class JarvisAgent:
             text.lower(),
         ).strip()
 
-        # ----------------------------------------------------
-        # WAKE WORD
-        # ----------------------------------------------------
-
+        # Wake word.
         if cls._is_wake_command(
             lower
         ):
+
             return {
                 "name": "wake_ack",
                 "arguments": {},
                 "needs_ai": False,
             }
 
-        # ----------------------------------------------------
-        # BROWSER BACK
-        # ----------------------------------------------------
-
+        # Back.
         back_clean = re.sub(
             r"\b(?:please|jarvis)\b",
             "",
@@ -767,23 +701,20 @@ class JarvisAgent:
             back_clean,
         ):
 
-            count = cls._count_repeated_command(
-                back_clean,
-                "back",
-            )
-
             return {
                 "name": "browser_back",
                 "arguments": {
-                    "count": count,
+                    "count": (
+                        cls._count_repeated_command(
+                            back_clean,
+                            "back",
+                        )
+                    )
                 },
                 "needs_ai": False,
             }
 
-        # ----------------------------------------------------
-        # BROWSER FORWARD
-        # ----------------------------------------------------
-
+        # Forward.
         forward_clean = re.sub(
             r"\b(?:please|jarvis)\b",
             "",
@@ -801,23 +732,20 @@ class JarvisAgent:
             forward_clean,
         ):
 
-            count = cls._count_repeated_command(
-                forward_clean,
-                "forward",
-            )
-
             return {
                 "name": "browser_forward",
                 "arguments": {
-                    "count": count,
+                    "count": (
+                        cls._count_repeated_command(
+                            forward_clean,
+                            "forward",
+                        )
+                    )
                 },
                 "needs_ai": False,
             }
 
-        # ----------------------------------------------------
-        # BROWSER CLOSE
-        # ----------------------------------------------------
-
+        # Close.
         close_clean = re.sub(
             r"\b(?:please|jarvis)\b",
             "",
@@ -850,10 +778,7 @@ class JarvisAgent:
                 "needs_ai": False,
             }
 
-        # ----------------------------------------------------
-        # BROWSER OBSERVATION
-        # ----------------------------------------------------
-
+        # Browser observation.
         explicit_observation = (
             (
                 re.search(
@@ -866,33 +791,28 @@ class JarvisAgent:
                 )
             )
             or re.search(
-                r"\b(?:inspect|observe)\s+(?:the\s+)?"
+                r"\b(?:inspect|observe)\s+"
+                r"(?:the\s+)?"
                 r"(?:current\s+)?"
                 r"(?:page|browser|website|webpage)\b",
                 lower,
             )
         )
 
-        browser_context_request = (
-            cls._looks_like_browser_context_request(
-                lower
-            )
-        )
-
         if (
             explicit_observation
-            or browser_context_request
+            or cls._looks_like_browser_context_request(
+                lower
+            )
         ):
+
             return {
                 "name": "browser_observe",
                 "arguments": {},
                 "needs_ai": True,
             }
 
-        # ----------------------------------------------------
-        # OPEN WEBSITE
-        # ----------------------------------------------------
-
+        # Website.
         open_match = re.search(
             r"\b(?:open|visit|take\s+me\s+to|go\s+to|bring\s+up)\s+(.+?)"
             r"(?:\s+website)?$",
@@ -901,9 +821,11 @@ class JarvisAgent:
 
         if open_match:
 
-            site = open_match.group(
-                1
-            ).strip()
+            site = (
+                open_match
+                .group(1)
+                .strip()
+            )
 
             site = re.sub(
                 r"^(?:the\s+)?",
@@ -911,48 +833,39 @@ class JarvisAgent:
                 site,
             ).strip()
 
-            normalized_site = (
+            site = (
                 cls._normalize_site_target(
                     site
                 )
             )
 
-            if (
-                normalized_site
-                in cls.KNOWN_SITES
-            ):
+            if site in cls.KNOWN_SITES:
 
                 return {
                     "name": "open_website",
                     "arguments": {
-                        "site": normalized_site,
+                        "site": site,
                     },
                     "needs_ai": False,
                 }
 
-        normalized_single = (
+        single_site = (
             cls._normalize_site_target(
                 lower
             )
         )
 
-        if (
-            normalized_single
-            in cls.KNOWN_SITES
-        ):
+        if single_site in cls.KNOWN_SITES:
 
             return {
                 "name": "open_website",
                 "arguments": {
-                    "site": normalized_single,
+                    "site": single_site,
                 },
                 "needs_ai": False,
             }
 
-        # ----------------------------------------------------
-        # GOOGLE SEARCH
-        # ----------------------------------------------------
-
+        # Google search.
         search_patterns = (
             r"^(?:google\s+)?search\s+(?:for\s+)?(.+)$",
             r"^(?:google\s+)?look\s+up\s+(.+)$",
@@ -969,9 +882,10 @@ class JarvisAgent:
 
             if match:
 
-                query = match.group(
-                    1
-                ).strip()
+                query = (
+                    match.group(1)
+                    .strip()
+                )
 
                 if query:
 
@@ -983,12 +897,10 @@ class JarvisAgent:
                         "needs_ai": False,
                     }
 
-        # ----------------------------------------------------
-        # WEATHER
-        # ----------------------------------------------------
-
+        # Weather.
         weather_match = re.search(
-            r"\bweather\b(?:\s+(?:in|for|at)\s+(.+))?$",
+            r"\bweather\b"
+            r"(?:\s+(?:in|for|at)\s+(.+))?$",
             text,
             re.IGNORECASE,
         )
@@ -996,9 +908,7 @@ class JarvisAgent:
         if weather_match:
 
             location = (
-                weather_match.group(
-                    1
-                )
+                weather_match.group(1)
                 or ""
             ).strip()
 
@@ -1012,21 +922,21 @@ class JarvisAgent:
                     "needs_ai": False,
                 }
 
-        # ----------------------------------------------------
-        # YOUTUBE SEARCH
-        # ----------------------------------------------------
-
+        # YouTube search.
         youtube_match = re.match(
-            r"^(?:search\s+)?youtube\s+(?:for\s+)?(.+)$",
+            r"^(?:search\s+)?youtube\s+"
+            r"(?:for\s+)?(.+)$",
             text,
             re.IGNORECASE,
         )
 
         if youtube_match:
 
-            query = youtube_match.group(
-                1
-            ).strip()
+            query = (
+                youtube_match
+                .group(1)
+                .strip()
+            )
 
             if query:
 
@@ -1038,10 +948,7 @@ class JarvisAgent:
                     "needs_ai": False,
                 }
 
-        # ----------------------------------------------------
-        # YOUTUBE PLAY
-        # ----------------------------------------------------
-
+        # YouTube play.
         play_match = re.match(
             r"^(?:play|watch|listen\s+to)\s+(.+?)"
             r"(?:\s+on\s+youtube)?$",
@@ -1051,9 +958,11 @@ class JarvisAgent:
 
         if play_match:
 
-            query = play_match.group(
-                1
-            ).strip()
+            query = (
+                play_match
+                .group(1)
+                .strip()
+            )
 
             if query:
 
@@ -1065,10 +974,7 @@ class JarvisAgent:
                     "needs_ai": False,
                 }
 
-        # ----------------------------------------------------
-        # MEDIA
-        # ----------------------------------------------------
-
+        # Media.
         media_map = {
             "play": "play",
             "pause": "pause",
@@ -1106,10 +1012,7 @@ class JarvisAgent:
                 "needs_ai": False,
             }
 
-        # ----------------------------------------------------
-        # PRODUCT PRICE
-        # ----------------------------------------------------
-
+        # Product price.
         price_match = re.match(
             r"^(?:find|check|search|tell\s+me|what(?:'s|\s+is))"
             r"(?:\s+the)?\s+(?:current\s+)?(?:price|cost)"
@@ -1120,14 +1023,18 @@ class JarvisAgent:
 
         if price_match:
 
-            product = price_match.group(
-                1
-            ).strip()
+            product = (
+                price_match
+                .group(1)
+                .strip()
+            )
 
             if product:
 
                 return {
-                    "name": "search_product_price",
+                    "name": (
+                        "search_product_price"
+                    ),
                     "arguments": {
                         "product": product,
                         "location": "",
@@ -1136,21 +1043,26 @@ class JarvisAgent:
                 }
 
         price_match = re.search(
-            r"\b(?:price|cost)\s+(?:of|for)\s+(.+)$",
+            r"\b(?:price|cost)\s+"
+            r"(?:of|for)\s+(.+)$",
             text,
             re.IGNORECASE,
         )
 
         if price_match:
 
-            product = price_match.group(
-                1
-            ).strip()
+            product = (
+                price_match
+                .group(1)
+                .strip()
+            )
 
             if product:
 
                 return {
-                    "name": "search_product_price",
+                    "name": (
+                        "search_product_price"
+                    ),
                     "arguments": {
                         "product": product,
                         "location": "",
@@ -1172,15 +1084,11 @@ class JarvisAgent:
 
         if name == "wake_ack":
 
-            result = (
-                "I'm listening, Sir."
-            )
-
             print(
                 "[AGENT] Wake acknowledgement."
             )
 
-            return result
+            return "I'm listening, Sir."
 
         function = TOOL_FUNCTIONS.get(
             name
@@ -1280,25 +1188,32 @@ class JarvisAgent:
         )
 
     # ========================================================
-    # CONVERSATION INPUT
+    # BATCH 4 — COMPACT CONTEXT
     # ========================================================
 
-    def _build_input(
-        self,
-        user_message,
-    ):
+    def _get_compact_history(self):
 
-        input_items = []
+        if self.conversation is None:
+            return []
 
-        if self.conversation is not None:
+        try:
 
             if hasattr(
                 self.conversation,
+                "get_messages",
+            ):
+                messages = (
+                    self.conversation
+                    .get_messages()
+                )
+
+            elif hasattr(
+                self.conversation,
                 "get_ai_messages",
             ):
-
-                previous = (
-                    self.conversation.get_ai_messages(
+                messages = (
+                    self.conversation
+                    .get_ai_messages(
                         max_messages=(
                             self.MAX_CONTEXT_MESSAGES
                         ),
@@ -1308,26 +1223,27 @@ class JarvisAgent:
                     )
                 )
 
-            elif hasattr(
-                self.conversation,
-                "get_messages",
-            ):
-
-                previous = (
-                    self.conversation.get_messages()
-                )[
-                    -self.MAX_CONTEXT_MESSAGES:
-                ]
-
             else:
+                return []
 
-                previous = []
+        except Exception:
 
-        else:
+            return []
 
-            previous = []
+        if not isinstance(
+            messages,
+            list,
+        ):
+            return []
 
-        for message in previous:
+        selected = []
+        total_chars = 0
+
+        # Walk newest -> oldest so recent turns have
+        # priority.
+        for message in reversed(
+            messages
+        ):
 
             if not isinstance(
                 message,
@@ -1339,25 +1255,73 @@ class JarvisAgent:
                 "role"
             )
 
-            content = message.get(
-                "content"
-            )
-
             if role not in {
                 "user",
                 "assistant",
             }:
                 continue
 
+            content = (
+                self._safe_reply_text(
+                    message.get(
+                        "content"
+                    )
+                )
+            )
+
             if not content:
                 continue
 
-            input_items.append({
+            if len(content) > (
+                self.MAX_CONTEXT_MESSAGE_CHARS
+            ):
+
+                content = (
+                    content[
+                        :self.MAX_CONTEXT_MESSAGE_CHARS
+                    ]
+                    .rstrip()
+                    + "..."
+                )
+
+            next_size = (
+                total_chars
+                + len(content)
+            )
+
+            if (
+                selected
+                and next_size
+                > self.MAX_CONTEXT_CHARS
+            ):
+                break
+
+            selected.append({
                 "role": role,
-                "content": str(
-                    content
-                ),
+                "content": content,
             })
+
+            total_chars += (
+                len(content)
+            )
+
+            if len(selected) >= (
+                self.MAX_CONTEXT_MESSAGES
+            ):
+                break
+
+        selected.reverse()
+
+        return selected
+
+    def _build_input(
+        self,
+        user_message,
+    ):
+
+        input_items = (
+            self._get_compact_history()
+        )
 
         input_items.append({
             "role": "user",
@@ -1374,10 +1338,6 @@ class JarvisAgent:
     def _score_browser_line(
         line,
     ):
-        """
-        Keep information-rich lines when the browser
-        snapshot needs to be reduced.
-        """
 
         text = line.lower()
 
@@ -1417,7 +1377,9 @@ class JarvisAgent:
             "performance": 5,
         }
 
-        for term, value in important_terms.items():
+        for term, value in (
+            important_terms.items()
+        ):
 
             if term in text:
                 score += value
@@ -1435,10 +1397,6 @@ class JarvisAgent:
         cls,
         snapshot,
     ):
-        """
-        Preserve the page identity plus the most useful
-        product/spec/price lines while reducing token usage.
-        """
 
         snapshot = cls._safe_reply_text(
             snapshot
@@ -1461,8 +1419,6 @@ class JarvisAgent:
         ):
             return snapshot
 
-        # Always preserve the beginning because it normally
-        # contains page/site identity.
         first_lines = lines[:6]
 
         candidates = []
@@ -1504,12 +1460,16 @@ class JarvisAgent:
             for line in selected
         )
 
-        for score, index, line in candidates:
+        for score, index, line in (
+            candidates
+        ):
 
             if score <= 0:
                 continue
 
-            line_length = len(line) + 1
+            line_length = (
+                len(line) + 1
+            )
 
             if (
                 current_length
@@ -1526,7 +1486,6 @@ class JarvisAgent:
                 line_length
             )
 
-        # Return in original page order.
         selected_set = set(
             selected
         )
@@ -1539,6 +1498,7 @@ class JarvisAgent:
                 line in selected_set
                 and line not in ordered
             ):
+
                 ordered.append(
                     line
                 )
@@ -1550,6 +1510,7 @@ class JarvisAgent:
         if len(result) > (
             cls.MAX_BROWSER_CONTEXT_CHARS
         ):
+
             result = (
                 result[
                     :cls.MAX_BROWSER_CONTEXT_CHARS
@@ -1588,11 +1549,11 @@ class JarvisAgent:
                     "your assessment. "
                     "Do not read or repeat the full URL."
                 ),
-            },
+            }
         ]
 
     # ========================================================
-    # NORMAL AI
+    # NORMAL NON-STREAM RESPONSE
     # ========================================================
 
     def _normal_ai_response(
@@ -1640,12 +1601,10 @@ class JarvisAgent:
                 "tools": [],
             }
 
-        reply = self._get_text(
-            response
-        )
-
         reply = self._safe_reply_text(
-            reply
+            self._get_text(
+                response
+            )
         )
 
         if not reply:
@@ -1666,7 +1625,320 @@ class JarvisAgent:
         }
 
     # ========================================================
-    # MAIN PROCESS
+    # BATCH 5 — STREAMING
+    # ========================================================
+
+    def _stream_ai_response(
+        self,
+        input_items,
+    ):
+
+        full_reply = ""
+
+        for event in (
+            self.provider.responses_stream(
+                input_items,
+                None,
+            )
+        ):
+
+            event_type = event.get(
+                "type"
+            )
+
+            if event_type == "delta":
+
+                text = event.get(
+                    "text",
+                    "",
+                )
+
+                if not isinstance(
+                    text,
+                    str,
+                ):
+                    continue
+
+                if not text:
+                    continue
+
+                full_reply += text
+
+                yield {
+                    "type": "delta",
+                    "text": text,
+                }
+
+            elif event_type == "error":
+
+                error = self._safe_reply_text(
+                    event.get(
+                        "error"
+                    )
+                )
+
+                yield {
+                    "type": "error",
+                    "error": (
+                        error
+                        or "OpenAI streaming error, Sir."
+                    ),
+                }
+
+                return
+
+        yield {
+            "type": "done",
+            "reply": (
+                self._safe_reply_text(
+                    full_reply
+                )
+            ),
+            "result_type": "ai",
+            "tools": [],
+        }
+
+    def stream(
+        self,
+        user_message,
+    ):
+        """
+        Streaming entrypoint used by /stream.
+
+        Local commands return immediately.
+
+        Ordinary AI and browser-context requests stream
+        text as it is generated.
+
+        Tool-heavy requests fall back to the normal
+        agent process so existing tool behavior remains
+        stable.
+        """
+
+        if user_message is None:
+            yield {
+                "type": "done",
+                "reply": "",
+                "result_type": "none",
+                "tools": [],
+            }
+            return
+
+        user_message = str(
+            user_message
+        ).strip()
+
+        if not user_message:
+            yield {
+                "type": "done",
+                "reply": "",
+                "result_type": "none",
+                "tools": [],
+            }
+            return
+
+        print(
+            f"[AGENT] Streaming process: "
+            f"{user_message!r}"
+        )
+
+        # Local fast path.
+        local = self._local_route(
+            user_message
+        )
+
+        if local:
+
+            name = local[
+                "name"
+            ]
+
+            arguments = local[
+                "arguments"
+            ]
+
+            needs_ai = local[
+                "needs_ai"
+            ]
+
+            print(
+                "[AGENT] Streaming local route:",
+                name,
+                arguments,
+                "needs_ai=",
+                needs_ai,
+            )
+
+            if name in {
+                "browser_back",
+                "browser_forward",
+            }:
+
+                result = (
+                    self._execute_browser_navigation(
+                        name,
+                        arguments.get(
+                            "count",
+                            1,
+                        ),
+                    )
+                )
+
+            else:
+
+                result = (
+                    self._execute_tool(
+                        name,
+                        arguments,
+                    )
+                )
+
+            executed_tools = [{
+                "name": name,
+                "arguments": arguments,
+                "result": result,
+            }]
+
+            if not needs_ai:
+
+                yield {
+                    "type": "done",
+                    "reply": (
+                        self._safe_reply_text(
+                            result
+                        )
+                    ),
+                    "result_type": "local",
+                    "tools": executed_tools,
+                }
+
+                return
+
+            # Browser context gets streamed AI output.
+            browser_input = (
+                self._build_browser_input(
+                    user_message,
+                    result,
+                )
+            )
+
+            print(
+                "[AGENT] Streaming browser-context "
+                "AI response."
+            )
+
+            full_reply = ""
+
+            for event in (
+                self.provider.responses_stream(
+                    browser_input,
+                    None,
+                )
+            ):
+
+                event_type = event.get(
+                    "type"
+                )
+
+                if event_type == "delta":
+
+                    text = event.get(
+                        "text",
+                        "",
+                    )
+
+                    if not isinstance(
+                        text,
+                        str,
+                    ):
+                        continue
+
+                    if not text:
+                        continue
+
+                    full_reply += text
+
+                    yield {
+                        "type": "delta",
+                        "text": text,
+                    }
+
+                elif event_type == "error":
+
+                    yield {
+                        "type": "error",
+                        "error": self._safe_reply_text(
+                            event.get(
+                                "error"
+                            )
+                        ),
+                    }
+
+                    return
+
+            if not full_reply:
+                full_reply = (
+                    self._safe_reply_text(
+                        result
+                    )
+                )
+
+            yield {
+                "type": "done",
+                "reply": full_reply,
+                "result_type": "agent",
+                "tools": executed_tools,
+            }
+
+            return
+
+        # Normal AI conversation streams directly.
+        if not self._looks_like_tool_request(
+            user_message
+        ):
+
+            print(
+                "[AGENT] Streaming normal "
+                "conversation."
+            )
+
+            input_items = self._build_input(
+                user_message
+            )
+
+            yield from self._stream_ai_response(
+                input_items
+            )
+
+            return
+
+        # Existing tool path remains stable.
+        print(
+            "[AGENT] Tool-like request detected. "
+            "Using existing non-streaming tool agent."
+        )
+
+        result = self.process(
+            user_message
+        )
+
+        yield {
+            "type": "done",
+            "reply": self._safe_reply_text(
+                result.get("reply")
+            ),
+            "result_type": result.get(
+                "type",
+                "agent",
+            ),
+            "tools": result.get(
+                "tools",
+                [],
+            ),
+        }
+
+    # ========================================================
+    # EXISTING NON-STREAM PROCESS
     # ========================================================
 
     def process(
@@ -1699,10 +1971,6 @@ class JarvisAgent:
             f"{user_message!r}"
         )
 
-        # ====================================================
-        # LOCAL FAST ROUTER
-        # ====================================================
-
         local = self._local_route(
             user_message
         )
@@ -1729,7 +1997,6 @@ class JarvisAgent:
                 needs_ai,
             )
 
-            # Repeated browser navigation.
             if name in {
                 "browser_back",
                 "browser_forward",
@@ -1760,19 +2027,18 @@ class JarvisAgent:
                 "result": result,
             }]
 
-            # Deterministic local response.
             if not needs_ai:
 
                 return {
-                    "reply": self._safe_reply_text(
-                        result
+                    "reply": (
+                        self._safe_reply_text(
+                            result
+                        )
                     ),
                     "type": "local",
                     "tools": executed_tools,
                 }
 
-            # Browser observation gets exactly one
-            # compact AI request.
             browser_input = (
                 self._build_browser_input(
                     user_message,
@@ -1816,12 +2082,10 @@ class JarvisAgent:
                     "tools": executed_tools,
                 }
 
-            reply = self._get_text(
-                response
-            )
-
             reply = self._safe_reply_text(
-                reply
+                self._get_text(
+                    response
+                )
             )
 
             if not reply:
@@ -1838,10 +2102,6 @@ class JarvisAgent:
                 "tools": executed_tools,
             }
 
-        # ====================================================
-        # NORMAL CHAT
-        # ====================================================
-
         if not self._looks_like_tool_request(
             user_message
         ):
@@ -1849,10 +2109,6 @@ class JarvisAgent:
             return self._normal_ai_response(
                 user_message
             )
-
-        # ====================================================
-        # TOOL-CAPABLE AI AGENT
-        # ====================================================
 
         print(
             "[AGENT] Tool-like request. "
@@ -1865,8 +2121,6 @@ class JarvisAgent:
 
         executed_tools = []
 
-        selected_tools = TOOLS
-
         for round_number in range(
             self.MAX_TOOL_ROUNDS
         ):
@@ -1878,7 +2132,7 @@ class JarvisAgent:
 
             response = self.provider.responses(
                 input_items,
-                selected_tools,
+                TOOLS,
             )
 
             if not isinstance(
@@ -1922,15 +2176,12 @@ class JarvisAgent:
                 )
             )
 
-            # No tool selected.
             if not function_calls:
 
-                reply = self._get_text(
-                    response
-                )
-
                 reply = self._safe_reply_text(
-                    reply
+                    self._get_text(
+                        response
+                    )
                 )
 
                 if reply:
@@ -1954,7 +2205,6 @@ class JarvisAgent:
                     "tools": executed_tools,
                 }
 
-            # Preserve Responses API output items.
             for item in output:
 
                 if isinstance(
@@ -2033,8 +2283,6 @@ class JarvisAgent:
                     "output": result,
                 })
 
-            # Deterministic terminal tool needs
-            # no extra AI round.
             if (
                 not requires_followup
                 and len(function_calls) == 1
@@ -2054,8 +2302,10 @@ class JarvisAgent:
                 )
 
                 return {
-                    "reply": self._safe_reply_text(
-                        result
+                    "reply": (
+                        self._safe_reply_text(
+                            result
+                        )
                     ),
                     "type": "agent",
                     "tools": executed_tools,

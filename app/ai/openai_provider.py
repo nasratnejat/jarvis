@@ -16,6 +16,10 @@ class OpenAIProvider(AIProvider):
         self.api_key = api_key
         self.model = model
 
+    # ========================================================
+    # NORMAL REQUEST
+    # ========================================================
+
     def _request(
         self,
         endpoint,
@@ -24,7 +28,6 @@ class OpenAIProvider(AIProvider):
     ):
 
         if not self.api_key:
-
             return {
                 "error": (
                     "My OpenAI API key is not "
@@ -56,7 +59,6 @@ class OpenAIProvider(AIProvider):
         )
 
         try:
-
             print(
                 f"[OPENAI] POST /v1/{endpoint}"
             )
@@ -83,7 +85,6 @@ class OpenAIProvider(AIProvider):
         except urllib.error.HTTPError as e:
 
             try:
-
                 raw_error = (
                     e.read()
                     .decode("utf-8")
@@ -100,7 +101,6 @@ class OpenAIProvider(AIProvider):
                 )
 
                 if message:
-
                     print(
                         "[OPENAI HTTP ERROR]",
                         message,
@@ -157,6 +157,365 @@ class OpenAIProvider(AIProvider):
                 )
             }
 
+    # ========================================================
+    # SSE STREAM PARSER
+    # ========================================================
+
+    @staticmethod
+    def _iter_sse_events(response):
+        """
+        Parse Server-Sent Events from the Responses API.
+
+        Yields the JSON object carried by each data event.
+        """
+
+        data_lines = []
+
+        for raw_line in response:
+
+            if isinstance(
+                raw_line,
+                bytes,
+            ):
+                line = raw_line.decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            else:
+                line = str(raw_line)
+
+            line = line.rstrip(
+                "\r\n"
+            )
+
+            # Blank line terminates an SSE event.
+            if not line:
+
+                if not data_lines:
+                    continue
+
+                data = "\n".join(
+                    data_lines
+                ).strip()
+
+                data_lines = []
+
+                if not data:
+                    continue
+
+                if data == "[DONE]":
+                    return
+
+                try:
+                    yield json.loads(
+                        data
+                    )
+                except json.JSONDecodeError:
+                    print(
+                        "[OPENAI STREAM] "
+                        "Invalid SSE JSON."
+                    )
+
+                continue
+
+            # Ignore SSE comments.
+            if line.startswith(":"):
+                continue
+
+            if line.startswith(
+                "data:"
+            ):
+                data_lines.append(
+                    line[5:].lstrip()
+                )
+
+        # Handle final event if the connection ends
+        # without a trailing blank line.
+        if data_lines:
+
+            data = "\n".join(
+                data_lines
+            ).strip()
+
+            if (
+                data
+                and data != "[DONE]"
+            ):
+                try:
+                    yield json.loads(
+                        data
+                    )
+                except json.JSONDecodeError:
+                    pass
+
+    # ========================================================
+    # RESPONSES STREAM
+    # ========================================================
+
+    def responses_stream(
+        self,
+        input_items,
+        tools=None,
+        timeout=60,
+    ):
+        """
+        Stream Responses API events.
+
+        Text events are exposed as:
+
+            {
+                "type": "delta",
+                "text": "..."
+            }
+
+        Errors are exposed as:
+
+            {
+                "type": "error",
+                "error": "..."
+            }
+        """
+
+        if not self.api_key:
+            yield {
+                "type": "error",
+                "error": (
+                    "My OpenAI API key is not "
+                    "configured, Sir. "
+                    "Please check your .env file."
+                ),
+            }
+            return
+
+        payload = {
+            "model": self.model,
+            "instructions": SYSTEM_PROMPT,
+            "input": input_items,
+            "stream": True,
+        }
+
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        try:
+            serialized = json.dumps(
+                payload,
+                ensure_ascii=False,
+            )
+
+            print(
+                "[OPENAI] Approx request chars:",
+                len(serialized),
+            )
+
+        except Exception:
+            pass
+
+        body = json.dumps(
+            payload,
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+        request = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": (
+                    f"Bearer {self.api_key}"
+                ),
+                "Accept": "text/event-stream",
+                "Cache-Control": "no-cache",
+            },
+            method="POST",
+        )
+
+        try:
+
+            print(
+                "[OPENAI] POST /v1/responses "
+                "(streaming)"
+            )
+
+            with urllib.request.urlopen(
+                request,
+                timeout=timeout,
+            ) as response:
+
+                for event in self._iter_sse_events(
+                    response
+                ):
+
+                    event_type = event.get(
+                        "type"
+                    )
+
+                    if event_type == (
+                        "response.output_text.delta"
+                    ):
+
+                        delta = event.get(
+                            "delta",
+                            "",
+                        )
+
+                        if isinstance(
+                            delta,
+                            str,
+                        ) and delta:
+
+                            yield {
+                                "type": "delta",
+                                "text": delta,
+                            }
+
+                    elif event_type == "error":
+
+                        message = (
+                            event
+                            .get("message")
+                            or event
+                            .get("error")
+                            or "OpenAI streaming error."
+                        )
+
+                        yield {
+                            "type": "error",
+                            "error": str(
+                                message
+                            ),
+                        }
+
+                    elif event_type == (
+                        "response.failed"
+                    ):
+
+                        response_data = event.get(
+                            "response",
+                            {},
+                        )
+
+                        error_data = (
+                            response_data
+                            .get("error", {})
+                            if isinstance(
+                                response_data,
+                                dict,
+                            )
+                            else {}
+                        )
+
+                        message = (
+                            error_data.get(
+                                "message"
+                            )
+                            if isinstance(
+                                error_data,
+                                dict,
+                            )
+                            else None
+                        )
+
+                        yield {
+                            "type": "error",
+                            "error": (
+                                message
+                                or "OpenAI response failed, Sir."
+                            ),
+                        }
+
+            print(
+                "[OPENAI] Streaming response finished."
+            )
+
+        except urllib.error.HTTPError as e:
+
+            try:
+
+                raw_error = (
+                    e.read()
+                    .decode("utf-8")
+                )
+
+                error_data = json.loads(
+                    raw_error
+                )
+
+                message = (
+                    error_data
+                    .get("error", {})
+                    .get("message")
+                )
+
+                if message:
+
+                    print(
+                        "[OPENAI HTTP ERROR]",
+                        message,
+                    )
+
+                    yield {
+                        "type": "error",
+                        "error": (
+                            "OpenAI error: "
+                            f"{message}"
+                        ),
+                    }
+
+                    return
+
+            except Exception:
+                pass
+
+            print(
+                "[OPENAI HTTP ERROR]",
+                repr(e),
+            )
+
+            yield {
+                "type": "error",
+                "error": (
+                    "OpenAI returned HTTP "
+                    f"error {e.code}, Sir."
+                ),
+            }
+
+        except urllib.error.URLError as e:
+
+            print(
+                "[OPENAI CONNECTION ERROR]",
+                repr(e),
+            )
+
+            yield {
+                "type": "error",
+                "error": (
+                    "I couldn't connect to "
+                    "OpenAI, Sir. Please check "
+                    "your internet connection."
+                ),
+            }
+
+        except Exception as e:
+
+            print(
+                "[OPENAI STREAM ERROR]",
+                repr(e),
+            )
+
+            yield {
+                "type": "error",
+                "error": (
+                    f"I encountered an OpenAI "
+                    f"streaming error, Sir: {e}"
+                ),
+            }
+
+    # ========================================================
+    # NORMAL RESPONSES API
+    # ========================================================
+
     def responses(
         self,
         input_items,
@@ -170,7 +529,6 @@ class OpenAIProvider(AIProvider):
         }
 
         if tools:
-
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
@@ -194,12 +552,9 @@ class OpenAIProvider(AIProvider):
             payload,
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # LEGACY ROUTER
-    #
-    # Kept so older code will not break.
-    # JarvisAgent no longer calls this.
-    # --------------------------------------------------------
+    # ========================================================
 
     def route(
         self,
@@ -284,14 +639,15 @@ Only call select_jarvis_tool.
             payload,
         )
 
-        if not isinstance(data, dict):
-
+        if not isinstance(
+            data,
+            dict,
+        ):
             return {
                 "tool": "none",
             }
 
         if data.get("error"):
-
             return {
                 "tool": "none",
             }
@@ -301,18 +657,25 @@ Only call select_jarvis_tool.
             [],
         )
 
-        if not isinstance(output, list):
-
+        if not isinstance(
+            output,
+            list,
+        ):
             return {
                 "tool": "none",
             }
 
         for item in output:
 
-            if not isinstance(item, dict):
+            if not isinstance(
+                item,
+                dict,
+            ):
                 continue
 
-            if item.get("type") != "function_call":
+            if item.get("type") != (
+                "function_call"
+            ):
                 continue
 
             if item.get("name") != (
@@ -360,6 +723,10 @@ Only call select_jarvis_tool.
         return {
             "tool": "none",
         }
+
+    # ========================================================
+    # LEGACY CHAT COMPLETIONS
+    # ========================================================
 
     def ask(
         self,

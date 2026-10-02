@@ -1,6 +1,12 @@
 import json
 
-from flask import Flask, request, jsonify
+from flask import (
+    Flask,
+    request,
+    jsonify,
+    Response,
+    stream_with_context,
+)
 
 import pc_tasks
 
@@ -69,7 +75,9 @@ def add_cors_headers(response):
 # MESSAGE PROCESSING
 # --------------------------------------------------
 
-def process_message(text):
+def process_message(
+    text,
+):
 
     result = agent.process(
         text
@@ -79,7 +87,21 @@ def process_message(text):
         "reply"
     )
 
-    if reply:
+    # Batch 4:
+    # Do not pollute AI history with deterministic
+    # local command chatter.
+    result_type = result.get(
+        "type",
+        "ai",
+    )
+
+    if (
+        reply
+        and result_type in {
+            "ai",
+            "agent",
+        }
+    ):
 
         conversation.add_user(
             text
@@ -93,10 +115,12 @@ def process_message(text):
 
 
 # --------------------------------------------------
-# RESPONSE
+# NORMAL RESPONSE
 # --------------------------------------------------
 
-def make_response(result):
+def make_response(
+    result,
+):
 
     return jsonify({
         "ok": True,
@@ -115,16 +139,34 @@ def make_response(result):
 
         "type": result.get(
             "type",
-            "ai"
+            "ai",
         ),
 
         "tools": result.get(
             "tools",
-            []
+            [],
         ),
 
         "state": pc_tasks.get_state(),
     })
+
+
+# --------------------------------------------------
+# SSE
+# --------------------------------------------------
+
+def make_sse(
+    payload,
+):
+
+    return (
+        "data: "
+        + json.dumps(
+            payload,
+            ensure_ascii=False,
+        )
+        + "\n\n"
+    )
 
 
 # --------------------------------------------------
@@ -137,7 +179,10 @@ def get_message():
         silent=True
     )
 
-    if isinstance(data, dict):
+    if isinstance(
+        data,
+        dict,
+    ):
 
         return (
             data.get("message")
@@ -157,7 +202,10 @@ def get_message():
                 raw
             )
 
-            if isinstance(data, dict):
+            if isinstance(
+                data,
+                dict,
+            ):
 
                 return (
                     data.get("message")
@@ -219,7 +267,7 @@ def memory():
 
 
 # --------------------------------------------------
-# TIMERS & REMINDERS
+# TIMERS
 # --------------------------------------------------
 
 def _timer_user_id():
@@ -326,7 +374,9 @@ def timers_due():
 
 
 @app.delete("/timers/<int:item_id>")
-def delete_timer(item_id):
+def delete_timer(
+    item_id,
+):
 
     try:
 
@@ -456,34 +506,170 @@ def stream():
         f"[JARVIS] Message: {text}"
     )
 
-    try:
+    def generate():
 
-        result = process_message(
-            text
-        )
+        accumulated_reply = ""
+        final_type = "ai"
+        final_tools = []
 
-        print(
-            "[JARVIS] Response type: "
-            f"{result.get('type')}"
-        )
+        try:
 
-        return make_response(
-            result
-        )
+            for event in agent.stream(
+                text
+            ):
 
-    except Exception as e:
+                event_type = event.get(
+                    "type"
+                )
 
-        print(
-            "[STREAM ERROR]",
-            repr(e),
-        )
+                # ------------------------------
+                # TEXT DELTA
+                # ------------------------------
 
-        return jsonify({
-            "ok": False,
-            "reply": (
-                f"I encountered an error, Sir: {e}"
-            ),
-        }), 500
+                if event_type == "delta":
+
+                    delta = event.get(
+                        "text",
+                        "",
+                    )
+
+                    if not isinstance(
+                        delta,
+                        str,
+                    ):
+                        continue
+
+                    if not delta:
+                        continue
+
+                    accumulated_reply += delta
+
+                    yield make_sse({
+                        "type": "delta",
+                        "text": delta,
+                    })
+
+                # ------------------------------
+                # FINAL RESPONSE
+                # ------------------------------
+
+                elif event_type == "done":
+
+                    final_reply = (
+                        event.get(
+                            "reply",
+                            "",
+                        )
+                    )
+
+                    if not isinstance(
+                        final_reply,
+                        str,
+                    ):
+
+                        final_reply = str(
+                            final_reply
+                        )
+
+                    if final_reply:
+                        accumulated_reply = (
+                            final_reply
+                        )
+
+                    final_type = event.get(
+                        "result_type",
+                        "ai",
+                    )
+
+                    final_tools = event.get(
+                        "tools",
+                        [],
+                    )
+
+                    # Store only genuine AI/agent
+                    # conversation turns.
+                    if (
+                        accumulated_reply
+                        and final_type in {
+                            "ai",
+                            "agent",
+                        }
+                    ):
+
+                        conversation.add_user(
+                            text
+                        )
+
+                        conversation.add_assistant(
+                            accumulated_reply
+                        )
+
+                    yield make_sse({
+                        "type": "done",
+                        "reply": (
+                            accumulated_reply
+                        ),
+                        "result_type": (
+                            final_type
+                        ),
+                        "tools": (
+                            final_tools
+                        ),
+                    })
+
+                # ------------------------------
+                # STREAM ERROR
+                # ------------------------------
+
+                elif event_type == "error":
+
+                    message = (
+                        event.get(
+                            "error"
+                        )
+                        or "Streaming error, Sir."
+                    )
+
+                    yield make_sse({
+                        "type": "error",
+                        "error": str(
+                            message
+                        ),
+                    })
+
+                    return
+
+        except GeneratorExit:
+
+            print(
+                "[STREAM] Client disconnected."
+            )
+
+        except Exception as e:
+
+            print(
+                "[STREAM ERROR]",
+                repr(e),
+            )
+
+            yield make_sse({
+                "type": "error",
+                "error": (
+                    f"I encountered an error, Sir: {e}"
+                ),
+            })
+
+    return Response(
+        stream_with_context(
+            generate()
+        ),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # --------------------------------------------------
@@ -531,7 +717,9 @@ def not_found(_):
 
 
 @app.errorhandler(500)
-def internal_error(error):
+def internal_error(
+    error,
+):
 
     print(
         "[FLASK 500]",
@@ -545,7 +733,7 @@ def internal_error(error):
 
 
 # --------------------------------------------------
-# START SERVER
+# START
 # --------------------------------------------------
 
 if __name__ == "__main__":
@@ -574,6 +762,10 @@ if __name__ == "__main__":
 
     print(
         "Agent  : tool calling enabled"
+    )
+
+    print(
+        "Stream : Responses API SSE enabled"
     )
 
     print("=" * 55)
