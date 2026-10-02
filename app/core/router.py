@@ -32,17 +32,15 @@ from app.commands.news import (
     handle_news,
 )
 
-from weather import (
-    get_weather,
-    DEFAULT_CITY,
+from app.commands.memory import (
+    is_memory_command,
+    handle_memory_command,
 )
+
+from weather import get_weather, DEFAULT_CITY
 
 import re
 
-
-# ============================================================
-# WEATHER
-# ============================================================
 
 def is_weather_command(command):
     if not command:
@@ -70,63 +68,18 @@ def handle_weather(command):
     return get_weather(city)
 
 
-# ============================================================
-# NEWS
-# ============================================================
-
-def is_news_router_command(command):
-    """
-    Dedicated news check.
-
-    This exists so NEWS is caught before the command can
-    fall through to the AI assistant.
-    """
-
-    if not command:
-        return False
-
-    return is_news_command(command.strip())
-
-
-def handle_news_router_command(command):
-    """
-    Dedicated news handler.
-    """
-
-    if not command:
-        return None
-
-    return handle_news(command.strip())
-
-
-# ============================================================
-# COMMAND ROUTER
-# ============================================================
-
 class CommandRouter:
-
     def __init__(self):
-
         self.registry = CommandRegistry()
-
         self._register_commands()
-
 
     def _register_commands(self):
 
-        # ----------------------------------------------------
-        # NEWS
-        # ----------------------------------------------------
-
         self.registry.register(
-            "news",
-            is_news_router_command,
-            handle_news_router_command,
+            "memory",
+            is_memory_command,
+            handle_memory_command,
         )
-
-        # ----------------------------------------------------
-        # WEATHER
-        # ----------------------------------------------------
 
         self.registry.register(
             "weather",
@@ -134,9 +87,11 @@ class CommandRouter:
             handle_weather,
         )
 
-        # ----------------------------------------------------
-        # TIME
-        # ----------------------------------------------------
+        self.registry.register(
+            "news",
+            is_news_command,
+            handle_news,
+        )
 
         self.registry.register(
             "time",
@@ -144,19 +99,11 @@ class CommandRouter:
             handle_time,
         )
 
-        # ----------------------------------------------------
-        # DATE
-        # ----------------------------------------------------
-
         self.registry.register(
             "date",
             is_date_command,
             handle_date,
         )
-
-        # ----------------------------------------------------
-        # BROWSER
-        # ----------------------------------------------------
 
         self.registry.register(
             "browser",
@@ -164,19 +111,11 @@ class CommandRouter:
             handle_browser_command,
         )
 
-        # ----------------------------------------------------
-        # APPS
-        # ----------------------------------------------------
-
         self.registry.register(
             "app",
             is_app_command,
             handle_app_command,
         )
-
-        # ----------------------------------------------------
-        # FOLDERS
-        # ----------------------------------------------------
 
         self.registry.register(
             "folder",
@@ -184,59 +123,17 @@ class CommandRouter:
             handle_folder_command,
         )
 
-        # ----------------------------------------------------
-        # WINDOWS
-        # ----------------------------------------------------
-
         self.registry.register(
             "window",
             is_window_command,
             handle_window_command,
         )
 
-
     def dispatch(self, command):
-
-        if not command:
-            return None
-
-        command = command.strip()
-
-        if not command:
-            return None
-
-        # ----------------------------------------------------
-        # HARD NEWS ROUTE
-        #
-        # Prevents:
-        #
-        # news
-        #
-        # from falling through to AI.
-        # ----------------------------------------------------
-
-        if is_news_router_command(command):
-
-            print(
-                f"[ROUTER] NEWS COMMAND -> {command!r}"
-            )
-
-            return handle_news_router_command(command)
-
-        # ----------------------------------------------------
-        # NORMAL COMMAND REGISTRY
-        # ----------------------------------------------------
-
         return self.registry.dispatch(command)
 
-
     def get_commands(self):
-
         return self.registry.get_commands()
 
-
-# ============================================================
-# GLOBAL ROUTER
-# ============================================================
 
 router = CommandRouter()

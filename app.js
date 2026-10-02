@@ -1,6 +1,6 @@
 // ============================================================
 // J.A.R.V.I.S. — app.js
-// BATCH 1 — STABLE JSON EDITION
+// BATCH 1 — TRUE STANDBY / WAKE-WORD CONTROL
 // ============================================================
 
 const SERVER = "http://127.0.0.1:5000";
@@ -21,13 +21,16 @@ const memList = document.getElementById("mem-list");
 let mode = "sleeping";
 let activated = false;
 
-let cmdTimer = null;
 let finalBuffer = "";
+let cmdTimer = null;
 
 let isSpeaking = false;
 let jarvisVoice = null;
-
 let activeRequest = null;
+
+let recognitionStarting = false;
+let recognitionRunning = false;
+let recognitionRestartTimer = null;
 
 // ============================================================
 // VOICE
@@ -35,11 +38,13 @@ let activeRequest = null;
 
 const LANG = "en-US";
 
+// These are the ONLY phrases allowed to wake JARVIS.
 const WAKE_RE =
-  /\b(?:(?:hey|ok|okay)\s+)?(?:jarvis|jarvas|jervis|jarvi|gervais|travis|charvis|jarvus)\b/gi;
+  /\b(?:(?:hey|ok|okay)\s+)?(?:jarvis|jarvas|jervis|jarvi|gervais|travis|charvis|jarvus|wake\s+up)\b/gi;
 
+// Sleep commands are handled locally.
 const SLEEP_RE =
-  /\b(?:go offline|go to sleep|sleep mode|go sleep|jarvis sleep|stand by|standby|good night)\b/i;
+  /\b(?:sleep|go\s+to\s+sleep|go\s+sleep|sleep\s+mode|go\s+offline|stand\s+by|standby|good\s+night|jarvis\s+sleep)\b/gi;
 
 // ============================================================
 // PERSONALITY
@@ -88,11 +93,22 @@ function randomLine(group) {
 }
 
 // ============================================================
-// TEXT CLEANUP
+// SILENT METADATA
+// ============================================================
+
+function removeSilentMetadata(text) {
+  return String(text || "")
+    .replace(/\*[\s\S]*?\*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ============================================================
+// TEXT
 // ============================================================
 
 function jarvisize(text) {
-  const clean = String(text || "").trim();
+  const clean = removeSilentMetadata(text);
 
   if (!clean) {
     return "Nothing to report.";
@@ -106,12 +122,9 @@ function jarvisize(text) {
 // ============================================================
 
 function normalizeCommand(text) {
-  let c = String(text || "")
-    .toLowerCase()
-    .trim();
+  let c = removeSilentMetadata(text).toLowerCase().trim();
 
   c = c.replace(/[.,!?;:]+/g, " ");
-
   c = c.replace(/\s+/g, " ").trim();
 
   const replacements = [
@@ -119,27 +132,17 @@ function normalizeCommand(text) {
     [/\bnote\s+pad\b/g, "notepad"],
     [/\bnote-pad\b/g, "notepad"],
     [/\bnotepadd\b/g, "notepad"],
-
     [/\bcrhome\b/g, "chrome"],
     [/\bchrom\b/g, "chrome"],
-
-    [/\byou\s*tube\b/g, "youtube"],
-    [/\byou\s*tub\b/g, "youtube"],
-
-    [/\bspot\s*ify\b/g, "spotify"],
-    [/\bspotty\s*fy\b/g, "spotify"],
-
-    [/\bdis\s*cord\b/g, "discord"],
-
+    [/\byou\s+tube\b/g, "youtube"],
+    [/\bspot\s+ify\b/g, "spotify"],
+    [/\bspotty\s+fy\b/g, "spotify"],
+    [/\bdis\s+cord\b/g, "discord"],
     [/\bcalc\b/g, "calculator"],
-
-    [/\btask\s*man\b/g, "task manager"],
-
-    [/\bvs\s*code\b/g, "vscode"],
-
-    [/\bpower\s*shell\b/g, "powershell"],
-
-    [/\bfile\s*explorer\b/g, "file explorer"],
+    [/\btask\s+man\b/g, "task manager"],
+    [/\bvs\s+code\b/g, "vscode"],
+    [/\bpower\s+shell\b/g, "powershell"],
+    [/\bfile\s+explorer\b/g, "file explorer"],
   ];
 
   for (const [pattern, replacement] of replacements) {
@@ -168,7 +171,6 @@ function updateClock() {
 }
 
 updateClock();
-
 setInterval(updateClock, 1000);
 
 // ============================================================
@@ -179,6 +181,7 @@ async function refreshHealth() {
   try {
     const response = await fetch(`${SERVER}/health`, {
       signal: AbortSignal.timeout(3000),
+      cache: "no-store",
     });
 
     if (!response.ok) {
@@ -205,7 +208,6 @@ async function refreshHealth() {
 }
 
 refreshHealth();
-
 setInterval(refreshHealth, 5000);
 
 // ============================================================
@@ -269,10 +271,15 @@ function addMsg(role, html) {
 
   div.className = `msg ${role}`;
 
-  div.innerHTML = `<div class="lbl">
+  div.innerHTML = `
+    <div class="lbl">
       ${role === "user" ? "YOU" : "JARVIS"}
     </div>
-    <div class="txt">${html}</div>`;
+
+    <div class="txt">
+      ${html}
+    </div>
+  `;
 
   const shouldScroll = isNearBottom();
 
@@ -311,9 +318,7 @@ function loadVoice() {
 
     if (voice) {
       jarvisVoice = voice;
-
       console.log("JARVIS voice:", voice.name);
-
       return;
     }
   }
@@ -333,7 +338,6 @@ function loadVoice() {
 
 if (window.speechSynthesis) {
   speechSynthesis.onvoiceschanged = loadVoice;
-
   loadVoice();
 }
 
@@ -342,15 +346,16 @@ if (window.speechSynthesis) {
 // ============================================================
 
 const speakQueue = [];
-
 let queueRunning = false;
 
 function speakQueued(text) {
-  if (!text) {
+  const cleanText = removeSilentMetadata(text);
+
+  if (!cleanText) {
     return;
   }
 
-  speakQueue.push(text);
+  speakQueue.push(cleanText);
 
   if (!queueRunning) {
     drainQueue();
@@ -360,19 +365,14 @@ function speakQueued(text) {
 function drainQueue() {
   if (!speakQueue.length) {
     queueRunning = false;
-
     isSpeaking = false;
 
     if (stopBtn) {
       stopBtn.style.display = "none";
     }
 
-    setState(
-      activated ? "ready" : "sleeping",
-      activated ? "LISTENING" : "STANDBY",
-    );
-
-    setTimeout(tryStartRecognition, 300);
+    // Restart recognition only after speech ends.
+    setTimeout(startRecognition, 100);
 
     return;
   }
@@ -386,11 +386,20 @@ function drainQueue() {
     stopBtn.style.display = "flex";
   }
 
-  const text = speakQueue.shift();
+  const text = removeSilentMetadata(speakQueue.shift());
+
+  if (!text) {
+    drainQueue();
+    return;
+  }
 
   const utterance = new SpeechSynthesisUtterance(text);
 
-  utterance.rate = 1.02;
+  // ==========================================================
+  // VOICE SETTINGS — UNCHANGED
+  // ==========================================================
+
+  utterance.rate = 1.15;
   utterance.pitch = 0.86;
   utterance.volume = 1;
 
@@ -409,9 +418,14 @@ function drainQueue() {
 // ============================================================
 
 function speak(text) {
+  const cleanText = removeSilentMetadata(text);
+
+  if (!cleanText) {
+    return;
+  }
+
   if (!window.speechSynthesis) {
     setState("ready", "LISTENING");
-
     return;
   }
 
@@ -421,16 +435,15 @@ function speak(text) {
 
   setState("speaking", "RESPONDING...");
 
-  speakQueued(text);
+  speakQueued(cleanText);
 }
 
 // ============================================================
-// STOP
+// STOP SPEAKING
 // ============================================================
 
 function stopSpeaking() {
   speakQueue.length = 0;
-
   queueRunning = false;
 
   if (activeRequest) {
@@ -451,12 +464,13 @@ function stopSpeaking() {
     stopBtn.style.display = "none";
   }
 
-  setState(
-    activated ? "ready" : "sleeping",
-    activated ? "LISTENING" : "STANDBY",
-  );
+  if (activated) {
+    setState("ready", "LISTENING");
+  } else {
+    setState("sleeping", "STANDBY");
+  }
 
-  setTimeout(tryStartRecognition, 250);
+  setTimeout(startRecognition, 100);
 }
 
 if (stopBtn) {
@@ -474,11 +488,10 @@ document.addEventListener("keydown", (e) => {
 // ============================================================
 
 async function sendMessage(text) {
-  text = normalizeCommand(text);
+  text = normalizeCommand(removeSilentMetadata(text));
 
   if (!text) {
     setState("ready", "LISTENING");
-
     return;
   }
 
@@ -488,11 +501,13 @@ async function sendMessage(text) {
 
   const messageEl = addMsg(
     "jarvis",
-    `<span class="typing">
+    `
+      <span class="typing">
         <span>.</span>
         <span>.</span>
         <span>.</span>
-      </span>`,
+      </span>
+    `,
   );
 
   const output = messageEl.querySelector(".txt");
@@ -502,16 +517,14 @@ async function sendMessage(text) {
 
     const response = await fetch(`${SERVER}/stream`, {
       method: "POST",
-
       headers: {
         "Content-Type": "text/plain;charset=UTF-8",
       },
-
       body: JSON.stringify({
         message: text,
       }),
-
       signal: activeRequest.signal,
+      cache: "no-store",
     });
 
     activeRequest = null;
@@ -531,11 +544,11 @@ async function sendMessage(text) {
         }
       } catch (e) {}
 
+      serverMessage = removeSilentMetadata(serverMessage);
+
       output.textContent = serverMessage;
 
       speak(serverMessage);
-
-      setState("ready", "LISTENING");
 
       return;
     }
@@ -543,14 +556,13 @@ async function sendMessage(text) {
     const data = await response.json();
 
     if (!data.ok) {
-      const error =
-        data.reply || data.error || "The server returned an error, Sir.";
+      const error = removeSilentMetadata(
+        data.reply || data.error || "The server returned an error, Sir.",
+      );
 
       output.textContent = error;
 
       speak(error);
-
-      setState("ready", "LISTENING");
 
       return;
     }
@@ -575,11 +587,9 @@ async function sendMessage(text) {
       message = "I couldn't reach the JARVIS server, Sir.";
     }
 
-    output.textContent = "✕ " + message;
+    output.textContent = "✕ " + removeSilentMetadata(message);
 
     speak(message);
-
-    setState("ready", "LISTENING");
   }
 }
 
@@ -598,7 +608,6 @@ function escapeHtml(text) {
 
 // ============================================================
 // SPEECH RECOGNITION
-// RESTORED STABLE VERSION
 // ============================================================
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -606,11 +615,60 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null;
 
 // ============================================================
-// START RECOGNITION
+// BUFFER CONTROL
 // ============================================================
 
-function tryStartRecognition() {
-  if (!SR) {
+function clearSpeechBuffer() {
+  finalBuffer = "";
+
+  clearTimeout(cmdTimer);
+  cmdTimer = null;
+
+  if (cmdInput) {
+    cmdInput.value = "";
+  }
+}
+
+// ============================================================
+// WAKE DETECTION
+// ============================================================
+
+function containsWakeWord(text) {
+  const clean = removeSilentMetadata(text);
+
+  WAKE_RE.lastIndex = 0;
+
+  return WAKE_RE.test(clean);
+}
+
+function removeWakeWord(text) {
+  let clean = removeSilentMetadata(text);
+
+  WAKE_RE.lastIndex = 0;
+
+  clean = clean.replace(WAKE_RE, " ");
+
+  return clean.replace(/\s+/g, " ").trim();
+}
+
+// ============================================================
+// SLEEP DETECTION
+// ============================================================
+
+function containsSleepCommand(text) {
+  const clean = removeSilentMetadata(text);
+
+  SLEEP_RE.lastIndex = 0;
+
+  return SLEEP_RE.test(clean);
+}
+
+// ============================================================
+// RECOGNITION START
+// ============================================================
+
+function startRecognition() {
+  if (!SR || !rec) {
     return;
   }
 
@@ -622,17 +680,41 @@ function tryStartRecognition() {
     return;
   }
 
-  if (!rec) {
+  if (recognitionRunning) {
     return;
   }
 
+  if (recognitionStarting) {
+    return;
+  }
+
+  recognitionStarting = true;
+
   try {
     rec.start();
-
-    console.log("Speech recognition started.");
   } catch (error) {
-    console.debug("Speech recognition start:", error.message);
+    recognitionStarting = false;
+
+    console.debug("Recognition start:", error.message);
+
+    scheduleRecognitionRestart();
   }
+}
+
+// ============================================================
+// RECOGNITION RESTART
+// ============================================================
+
+function scheduleRecognitionRestart() {
+  clearTimeout(recognitionRestartTimer);
+
+  recognitionRestartTimer = setTimeout(() => {
+    recognitionRestartTimer = null;
+
+    if (!isSpeaking) {
+      startRecognition();
+    }
+  }, 100);
 }
 
 // ============================================================
@@ -640,9 +722,15 @@ function tryStartRecognition() {
 // ============================================================
 
 function abortRecognition() {
+  clearTimeout(recognitionRestartTimer);
+  recognitionRestartTimer = null;
+
   if (!rec) {
     return;
   }
+
+  recognitionStarting = false;
+  recognitionRunning = false;
 
   try {
     rec.abort();
@@ -650,27 +738,56 @@ function abortRecognition() {
 }
 
 // ============================================================
-// SLEEP
+// ENTER SLEEP
 // ============================================================
 
 function goSleep() {
+  console.log("JARVIS entering true standby.");
+
+  // ----------------------------------------------------------
+  // Immediately disable command mode.
+  // ----------------------------------------------------------
+
   activated = false;
 
-  finalBuffer = "";
+  // ----------------------------------------------------------
+  // Destroy anything already being processed.
+  // ----------------------------------------------------------
 
-  clearTimeout(cmdTimer);
+  clearSpeechBuffer();
+
+  if (activeRequest) {
+    try {
+      activeRequest.abort();
+    } catch (e) {}
+
+    activeRequest = null;
+  }
+
+  // ----------------------------------------------------------
+  // Stop recognition.
+  // ----------------------------------------------------------
 
   abortRecognition();
 
-  speakQueue.length = 0;
+  // ----------------------------------------------------------
+  // Stop speech queue.
+  // ----------------------------------------------------------
 
+  speakQueue.length = 0;
   queueRunning = false;
 
   if (window.speechSynthesis) {
     speechSynthesis.cancel();
   }
 
-  const goodbye = new SpeechSynthesisUtterance(randomLine("offline"));
+  // ----------------------------------------------------------
+  // Offline response.
+  // ----------------------------------------------------------
+
+  const goodbye = new SpeechSynthesisUtterance(
+    removeSilentMetadata(randomLine("offline")),
+  );
 
   goodbye.rate = 1.02;
   goodbye.pitch = 0.84;
@@ -680,28 +797,40 @@ function goSleep() {
     goodbye.voice = jarvisVoice;
   }
 
-  setState("speaking", "POWERING DOWN...");
-
   isSpeaking = true;
+
+  setState("speaking", "POWERING DOWN...");
 
   if (stopBtn) {
     stopBtn.style.display = "flex";
   }
 
-  const done = () => {
+  const finished = () => {
     isSpeaking = false;
 
     if (stopBtn) {
       stopBtn.style.display = "none";
     }
 
+    // --------------------------------------------------------
+    // TRUE STANDBY
+    // --------------------------------------------------------
+
     setState("sleeping", "STANDBY");
 
-    setTimeout(tryStartRecognition, 500);
+    clearSpeechBuffer();
+
+    // Start recognition again ONLY for wake-word detection.
+    // No command buffer exists while asleep.
+    setTimeout(() => {
+      if (!activated && !isSpeaking) {
+        startRecognition();
+      }
+    }, 150);
   };
 
-  goodbye.onend = done;
-  goodbye.onerror = done;
+  goodbye.onend = finished;
+  goodbye.onerror = finished;
 
   speechSynthesis.speak(goodbye);
 }
@@ -715,109 +844,181 @@ if (SR) {
 
   rec.continuous = true;
   rec.interimResults = true;
-  rec.maxAlternatives = 5;
+  rec.maxAlternatives = 3;
   rec.lang = LANG;
+
+  // ----------------------------------------------------------
+  // START
+  // ----------------------------------------------------------
+
+  rec.onstart = () => {
+    recognitionStarting = false;
+    recognitionRunning = true;
+
+    console.log(
+      activated ? "Command recognition ready." : "Wake-word recognition ready.",
+    );
+  };
 
   // ----------------------------------------------------------
   // RESULT
   // ----------------------------------------------------------
 
   rec.onresult = (event) => {
-    if (isSpeaking || mode === "thinking" || mode === "speaking") {
+    if (isSpeaking) {
       return;
     }
 
-    const result = event.results[event.results.length - 1];
+    let newFinalText = "";
+    let interimText = "";
+    let hasFinalResult = false;
 
-    const alternatives = Array.from(result)
-      .map((item) => item.transcript.toLowerCase().trim())
-      .filter(Boolean);
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
 
-    if (!alternatives.length) {
-      return;
-    }
-
-    const best = alternatives[0];
-
-    const wakeAlternative = alternatives.find((text) => {
-      WAKE_RE.lastIndex = 0;
-
-      return WAKE_RE.test(text);
-    });
-
-    // --------------------------------------------------------
-    // SLEEPING
-    // --------------------------------------------------------
-
-    if (!activated) {
-      if (!wakeAlternative) {
-        return;
+      if (!result || !result[0]) {
+        continue;
       }
 
-      activated = true;
-    }
+      const transcript = removeSilentMetadata(result[0].transcript);
 
-    // --------------------------------------------------------
-    // SLEEP COMMAND
-    // --------------------------------------------------------
+      if (!transcript) {
+        continue;
+      }
 
-    if (activated && result.isFinal && SLEEP_RE.test(best)) {
-      goSleep();
+      // ======================================================
+      // SLEEPING
+      // ======================================================
 
-      return;
-    }
+      if (!activated) {
+        // IMPORTANT:
+        // Do NOT put sleeping speech into finalBuffer.
+        // Do NOT display it.
+        // Do NOT send it to the server.
+        // Do NOT remember it.
+        //
+        // We only inspect it for a wake phrase.
 
-    // --------------------------------------------------------
-    // REMOVE WAKE WORD
-    // --------------------------------------------------------
+        if (containsWakeWord(transcript)) {
+          console.log("Wake word detected:", transcript);
 
-    const command = (wakeAlternative || best)
-      .replace(WAKE_RE, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+          activated = true;
 
-    // --------------------------------------------------------
-    // WAKE ONLY
-    // --------------------------------------------------------
+          clearSpeechBuffer();
 
-    if (!command) {
-      clearTimeout(cmdTimer);
-
-      if (mode === "sleeping") {
-        cmdTimer = setTimeout(() => {
-          abortRecognition();
+          const afterWake = removeWakeWord(transcript);
 
           setState("ready", "LISTENING");
 
-          speak(randomLine("wake"));
-        }, 500);
+          // If the wake phrase contained
+          // an immediate command:
+          //
+          // "wake up open chrome"
+          //
+          // process only the command portion.
+
+          if (result.isFinal) {
+            if (afterWake) {
+              finalBuffer = afterWake;
+            } else {
+              speak(randomLine("wake"));
+              return;
+            }
+          } else {
+            cmdInput.value = afterWake || "";
+
+            if (!afterWake) {
+              return;
+            }
+          }
+        } else {
+          // Completely ignore sleeping speech.
+          return;
+        }
+      }
+
+      // ======================================================
+      // AWAKE
+      // ======================================================
+
+      if (result.isFinal) {
+        newFinalText += (newFinalText ? " " : "") + transcript;
+
+        hasFinalResult = true;
+      } else {
+        interimText += (interimText ? " " : "") + transcript;
+      }
+    }
+
+    // ========================================================
+    // SLEEP COMMAND
+    // ========================================================
+
+    if (activated && containsSleepCommand(newFinalText || interimText)) {
+      // Do not wait for the server.
+      // Do not add the sleep command to the buffer.
+
+      if (hasFinalResult) {
+        goSleep();
       }
 
       return;
     }
 
-    // --------------------------------------------------------
-    // COMMAND
-    // --------------------------------------------------------
+    // ========================================================
+    // STORE AWAKE SPEECH ONLY
+    // ========================================================
 
-    cmdInput.value = normalizeCommand(command);
+    if (newFinalText) {
+      finalBuffer += (finalBuffer ? " " : "") + newFinalText;
 
-    clearTimeout(cmdTimer);
+      finalBuffer = removeSilentMetadata(finalBuffer);
+    }
 
-    cmdTimer = setTimeout(
-      () => {
-        const finalCommand = normalizeCommand(command);
+    // ========================================================
+    // CURRENT AWAKE SPEECH
+    // ========================================================
 
-        cmdInput.value = "";
-
-        abortRecognition();
-
-        if (finalCommand) {
-          sendMessage(finalCommand);
-        }
-      },
-      result.isFinal ? 150 : 900,
+    const combinedText = removeSilentMetadata(
+      finalBuffer + (interimText ? " " + interimText : ""),
     );
+
+    if (!combinedText) {
+      return;
+    }
+
+    // ========================================================
+    // DISPLAY CURRENT COMMAND
+    // ========================================================
+
+    cmdInput.value = combinedText;
+
+    // ========================================================
+    // WAIT FOR FINAL
+    // ========================================================
+
+    if (!hasFinalResult) {
+      return;
+    }
+
+    // ========================================================
+    // FINAL COMMAND
+    // ========================================================
+
+    const finalCommand = normalizeCommand(finalBuffer);
+
+    if (!finalCommand) {
+      clearSpeechBuffer();
+      return;
+    }
+
+    console.log("Sending command:", finalCommand);
+
+    clearSpeechBuffer();
+
+    abortRecognition();
+
+    sendMessage(finalCommand);
   };
 
   // ----------------------------------------------------------
@@ -825,34 +1026,38 @@ if (SR) {
   // ----------------------------------------------------------
 
   rec.onerror = (event) => {
+    recognitionStarting = false;
+    recognitionRunning = false;
+
     console.warn("Speech recognition:", event.error);
 
     if (
       event.error === "not-allowed" ||
       event.error === "service-not-allowed"
     ) {
-      wakeStatus.textContent = "MIC BLOCKED";
+      if (wakeStatus) {
+        wakeStatus.textContent = "MIC BLOCKED";
 
-      wakeStatus.style.color = "#ff4400";
+        wakeStatus.style.color = "#ff4400";
+      }
 
       return;
     }
 
     if (event.error === "network") {
-      wakeStatus.textContent = "VOICE RETRY";
+      if (wakeStatus) {
+        wakeStatus.textContent = "VOICE RETRY";
 
-      wakeStatus.style.color = "#ffaa00";
+        wakeStatus.style.color = "#ffaa00";
+      }
+    }
 
+    if (event.error === "aborted" || event.error === "no-speech") {
+      scheduleRecognitionRestart();
       return;
     }
 
-    if (event.error === "aborted") {
-      return;
-    }
-
-    if (event.error === "no-speech") {
-      return;
-    }
+    scheduleRecognitionRestart();
   };
 
   // ----------------------------------------------------------
@@ -860,8 +1065,16 @@ if (SR) {
   // ----------------------------------------------------------
 
   rec.onend = () => {
+    recognitionStarting = false;
+    recognitionRunning = false;
+
+    // Recognition must continue while sleeping
+    // only because it is the wake-word detector.
+    //
+    // But sleeping speech is NEVER buffered.
+
     if (!isSpeaking && mode !== "thinking") {
-      setTimeout(tryStartRecognition, 250);
+      scheduleRecognitionRestart();
     }
   };
 
@@ -873,31 +1086,46 @@ if (SR) {
     micBtn.addEventListener("click", () => {
       activated = true;
 
-      setState("ready", "LISTENING");
+      clearSpeechBuffer();
 
-      tryStartRecognition();
+      setState("ready", "LISTENING");
 
       speak(randomLine("wake"));
     });
   }
 
   // ----------------------------------------------------------
-  // INITIAL START
+  // INITIAL RECOGNITION
   // ----------------------------------------------------------
 
-  setTimeout(tryStartRecognition, 1000);
+  setTimeout(startRecognition, 150);
+
+  setTimeout(startRecognition, 500);
+
+  setTimeout(startRecognition, 1000);
+
+  // First user interaction helps Chrome
+  // initialize microphone permissions.
 
   document.addEventListener(
     "click",
     () => {
-      tryStartRecognition();
+      startRecognition();
+
+      setTimeout(startRecognition, 150);
+
+      setTimeout(startRecognition, 400);
     },
-    { once: true },
+    {
+      once: true,
+    },
   );
 } else {
-  wakeStatus.textContent = "USE CHROME";
+  if (wakeStatus) {
+    wakeStatus.textContent = "USE CHROME";
 
-  wakeStatus.style.color = "#ff4400";
+    wakeStatus.style.color = "#ff4400";
+  }
 }
 
 // ============================================================
@@ -905,11 +1133,15 @@ if (SR) {
 // ============================================================
 
 async function sendTyped() {
-  const text = cmdInput.value.trim();
+  const text = removeSilentMetadata(cmdInput.value).trim();
 
   if (!text) {
     return;
   }
+
+  clearTimeout(cmdTimer);
+
+  abortRecognition();
 
   cmdInput.value = "";
 
@@ -926,7 +1158,6 @@ if (cmdInput) {
   cmdInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
-
       sendTyped();
     }
   });
@@ -942,17 +1173,16 @@ if (resetButton) {
   resetButton.addEventListener("click", async () => {
     stopSpeaking();
 
-    finalBuffer = "";
+    clearSpeechBuffer();
 
     try {
       await fetch(`${SERVER}/reset`, {
         method: "POST",
-
         headers: {
           "Content-Type": "text/plain;charset=UTF-8",
         },
-
         body: "{}",
+        cache: "no-store",
       });
     } catch (e) {
       console.warn("Reset failed:", e);
@@ -962,14 +1192,10 @@ if (resetButton) {
 
     addMsg("jarvis", "Conversation cleared.");
 
-    setState("ready", "MEMORY CLEARED");
-
-    setTimeout(() => {
-      setState(
-        activated ? "ready" : "sleeping",
-        activated ? "LISTENING" : "STANDBY",
-      );
-    }, 1500);
+    setState(
+      activated ? "ready" : "sleeping",
+      activated ? "MEMORY CLEARED" : "STANDBY",
+    );
   });
 }
 
@@ -985,6 +1211,7 @@ async function refreshMemory() {
   try {
     const response = await fetch(`${SERVER}/memory`, {
       signal: AbortSignal.timeout(3000),
+      cache: "no-store",
     });
 
     if (!response.ok) {
@@ -997,15 +1224,17 @@ async function refreshMemory() {
       memList.innerHTML = data.memory
         .map(
           (item, index) =>
-            `<div style="
-                padding:2px 0;
-                border-bottom:
-                1px solid
-                rgba(0,234,255,0.06)
-              ">
-                ${index + 1}.
-                ${escapeHtml(item)}
-              </div>`,
+            `
+                <div style="
+                  padding:2px 0;
+                  border-bottom:
+                  1px solid
+                  rgba(0,234,255,0.06)
+                ">
+                  ${index + 1}.
+                  ${escapeHtml(item)}
+                </div>
+              `,
         )
         .join("");
     } else {
@@ -1017,7 +1246,6 @@ async function refreshMemory() {
 }
 
 refreshMemory();
-
 setInterval(refreshMemory, 8000);
 
 // ============================================================
@@ -1025,9 +1253,9 @@ setInterval(refreshMemory, 8000);
 // ============================================================
 
 setTimeout(() => {
-  const boot = randomLine("boot");
+  const boot = removeSilentMetadata(randomLine("boot"));
 
-  addMsg("jarvis", boot);
+  addMsg("jarvis", escapeHtml(boot));
 
   setState("sleeping", "INITIALIZING...");
 
