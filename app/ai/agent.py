@@ -17,8 +17,39 @@ class JarvisAgent:
     MAX_CONTEXT_CHARS = 2800
     MAX_CONTEXT_MESSAGE_CHARS = 900
 
+    # Tool requests need less conversational history than ordinary chat.
+    MAX_TOOL_CONTEXT_MESSAGES = 3
+    MAX_TOOL_CONTEXT_CHARS = 1200
+
     # Browser requests get their own compact context.
-    MAX_BROWSER_CONTEXT_CHARS = 1800
+    MAX_BROWSER_CONTEXT_CHARS = 1200
+    MAX_TOOL_RESULT_CHARS = 1000
+
+    # Batch 6C:
+    # Browser actions may require multiple tool rounds.
+    MAX_BROWSER_STEPS = 6
+
+    BROWSER_CONTINUATION_TOOLS = {
+        "browser_open",
+        "browser_observe",
+        "browser_click",
+        "browser_back",
+        "browser_forward",
+    }
+
+    # Browser-heavy tasks do not need the entire tool catalog.
+    # Keeping this subset cuts the request size substantially while
+    # still allowing navigation, clicking, observation and web fallback.
+    BROWSER_TASK_TOOLS = {
+        "browser_open",
+        "browser_observe",
+        "browser_click",
+        "browser_back",
+        "browser_forward",
+        "browser_close",
+        "open_website",
+        "google_search",
+    }
 
     TERMINAL_TOOLS = {
         "get_weather",
@@ -653,6 +684,18 @@ class JarvisAgent:
             ),
         )
 
+    @staticmethod
+    def _is_current_page_find_request(user_message):
+        text = str(user_message or "").strip().lower()
+
+        return bool(
+            re.match(
+                r"^(?:find|locate)\s+.+$",
+                text,
+                re.IGNORECASE,
+            )
+        )
+
     @classmethod
     def _local_route(
         cls,
@@ -812,7 +855,27 @@ class JarvisAgent:
                 "needs_ai": True,
             }
 
-        # Website.
+        # Direct semantic browser click.
+        # Simple click commands do not need an AI round first.
+        click_match = re.match(
+            r"^\s*click\s*(?:on\s+)?(.+?)\s*$",
+            text,
+            re.IGNORECASE,
+        )
+
+        if click_match:
+            target = click_match.group(1).strip()
+
+            if target:
+                return {
+                    "name": "browser_click",
+                    "arguments": {
+                        "target": target,
+                    },
+                    "needs_ai": False,
+                }
+
+        # Website / page navigation.
         open_match = re.search(
             r"\b(?:open|visit|take\s+me\s+to|go\s+to|bring\s+up)\s+(.+?)"
             r"(?:\s+website)?$",
@@ -845,6 +908,18 @@ class JarvisAgent:
                     "name": "open_website",
                     "arguments": {
                         "site": site,
+                    },
+                    "needs_ai": False,
+                }
+
+            # Generic navigation for things such as "take me to Mac".
+            # The current page is authoritative, so let the browser resolve
+            # the visible target semantically instead of hard-coding sites.
+            if site:
+                return {
+                    "name": "browser_click",
+                    "arguments": {
+                        "target": site,
                     },
                     "needs_ai": False,
                 }
@@ -1126,8 +1201,22 @@ class JarvisAgent:
                 result
             )
 
+            if name.startswith("browser_"):
+                log_result = self._compact_browser_snapshot(
+                    result
+                )
+            else:
+                log_result = result
+
+                if len(log_result) > self.MAX_TOOL_RESULT_CHARS:
+                    log_result = (
+                        log_result[:self.MAX_TOOL_RESULT_CHARS]
+                        .rstrip()
+                        + "..."
+                    )
+
             print(
-                f"[AGENT] Tool result: {result}"
+                f"[AGENT] Tool result: {log_result}"
             )
 
             return result
@@ -1142,6 +1231,64 @@ class JarvisAgent:
             return (
                 f"The {name} tool failed: {e}"
             )
+
+    def _browser_action_reply(
+        self,
+        name,
+        arguments,
+        result,
+    ):
+        """
+        Keep full browser observations internally, but return a concise
+        user-facing confirmation for direct browser actions.
+
+        The full browser result is still retained in the tool trace and
+        remains available to later AI rounds when needed.
+        """
+
+        result_text = self._safe_reply_text(result)
+
+        # Preserve actual errors instead of hiding them.
+        lowered = result_text.lower()
+
+        if any(
+            lowered.startswith(prefix)
+            for prefix in (
+                "could not",
+                "the browser",
+                "error",
+                "failed",
+                "i couldn't",
+            )
+        ):
+            return result_text
+
+        if name == "browser_click":
+            target = ""
+
+            if isinstance(arguments, dict):
+                target = str(
+                    arguments.get("target") or ""
+                ).strip()
+
+            if target:
+                return f"Clicked {target}, Sir."
+
+            return "Clicked it, Sir."
+
+        if name == "browser_back":
+            return "Moved back, Sir."
+
+        if name == "browser_forward":
+            return "Moved forward, Sir."
+
+        if name == "browser_open":
+            return "Opened the page, Sir."
+
+        if name == "browser_observe":
+            return "I inspected the current page, Sir."
+
+        return "Done, Sir."
 
     def _execute_browser_navigation(
         self,
@@ -1329,6 +1476,87 @@ class JarvisAgent:
         })
 
         return input_items
+
+    def _build_tool_input(
+        self,
+        user_message,
+        browser_context=None,
+    ):
+        """Build a bounded context for tool-calling rounds."""
+        history = []
+
+        if self.conversation is not None:
+            try:
+                if hasattr(self.conversation, "get_ai_messages"):
+                    history = self.conversation.get_ai_messages(
+                        max_messages=self.MAX_TOOL_CONTEXT_MESSAGES,
+                        max_chars=self.MAX_TOOL_CONTEXT_CHARS,
+                    )
+                elif hasattr(self.conversation, "get_messages"):
+                    history = self.conversation.get_messages()[
+                        -self.MAX_TOOL_CONTEXT_MESSAGES:
+                    ]
+            except Exception:
+                history = []
+
+        result = []
+        total = 0
+
+        for message in history:
+            if not isinstance(message, dict):
+                continue
+
+            role = message.get("role")
+            content = self._safe_reply_text(
+                message.get("content")
+            )
+
+            if role not in {"user", "assistant"} or not content:
+                continue
+
+            remaining = (
+                self.MAX_TOOL_CONTEXT_CHARS
+                - total
+            )
+
+            if remaining <= 0:
+                break
+
+            content = content[:remaining]
+
+            result.append({
+                "role": role,
+                "content": content,
+            })
+
+            total += len(content)
+
+        if browser_context:
+            compact_browser = self._compact_browser_snapshot(
+                browser_context
+            )
+
+            if compact_browser:
+                result.append({
+                    "role": "user",
+                    "content": (
+                        "Current browser state. "
+                        "Use this as authoritative page evidence. "
+                        "For a find/locate request, inspect this page "
+                        "before using web search. "
+                        "Do not invent missing links, products, or facts.\n\n"
+                        + compact_browser
+                    ),
+                })
+
+        result.append({
+            "role": "user",
+            "content": str(
+                user_message or ""
+            ).strip(),
+        })
+
+        return result
 
     # ========================================================
     # BROWSER CONTEXT COMPACTION
@@ -1801,13 +2029,24 @@ class JarvisAgent:
 
             if not needs_ai:
 
+                if name in {
+                    "browser_click",
+                    "browser_open",
+                    "browser_observe",
+                    "browser_back",
+                    "browser_forward",
+                }:
+                    reply = self._browser_action_reply(
+                        name,
+                        arguments,
+                        result,
+                    )
+                else:
+                    reply = self._safe_reply_text(result)
+
                 yield {
                     "type": "done",
-                    "reply": (
-                        self._safe_reply_text(
-                            result
-                        )
-                    ),
+                    "reply": reply,
                     "result_type": "local",
                     "tools": executed_tools,
                 }
@@ -1937,6 +2176,40 @@ class JarvisAgent:
             ),
         }
 
+    def _tools_for_request(self, user_message):
+        """Return a smaller tool catalog for browser-heavy requests."""
+        text = str(user_message or "").strip().lower()
+
+        browser_like = (
+            self._is_current_page_find_request(text)
+            or bool(
+                re.search(
+                    r"\b(?:click|browser|webpage|website|page|navigate|open|visit|take\s+me\s+to|go\s+to)\b",
+                    text,
+                    re.IGNORECASE,
+                )
+            )
+        )
+
+        if not browser_like:
+            return TOOLS
+
+        selected = []
+
+        for tool in TOOLS:
+            if not isinstance(tool, dict):
+                continue
+
+            name = tool.get("name")
+
+            if not name and isinstance(tool.get("function"), dict):
+                name = tool["function"].get("name")
+
+            if name in self.BROWSER_TASK_TOOLS:
+                selected.append(tool)
+
+        return selected or TOOLS
+
     # ========================================================
     # EXISTING NON-STREAM PROCESS
     # ========================================================
@@ -2029,12 +2302,23 @@ class JarvisAgent:
 
             if not needs_ai:
 
+                if name in {
+                    "browser_click",
+                    "browser_open",
+                    "browser_observe",
+                    "browser_back",
+                    "browser_forward",
+                }:
+                    reply = self._browser_action_reply(
+                        name,
+                        arguments,
+                        result,
+                    )
+                else:
+                    reply = self._safe_reply_text(result)
+
                 return {
-                    "reply": (
-                        self._safe_reply_text(
-                            result
-                        )
-                    ),
+                    "reply": reply,
                     "type": "local",
                     "tools": executed_tools,
                 }
@@ -2115,11 +2399,37 @@ class JarvisAgent:
             "Using AI agent with tools."
         )
 
-        input_items = self._build_input(
-            user_message
-        )
-
         executed_tools = []
+        browser_steps = 0
+
+        # For "find/locate" requests, inspect the current page first.
+        # This keeps the task page-aware and avoids jumping straight to
+        # Google when the requested item is already visible.
+        current_browser_context = None
+
+        if self._is_current_page_find_request(
+            user_message
+        ):
+            print(
+                "[AGENT] Find request: observing current page first."
+            )
+
+            browser_steps = 1
+
+            current_browser_context = self._execute_tool(
+                "browser_observe",
+                {},
+            )
+
+            executed_tools.append({
+                "name": "browser_observe",
+                "arguments": {},
+                "result": self._compact_browser_snapshot(
+                    current_browser_context
+                ),
+            })
+
+        pending_items = []
 
         for round_number in range(
             self.MAX_TOOL_ROUNDS
@@ -2130,9 +2440,18 @@ class JarvisAgent:
                 round_number + 1,
             )
 
+            input_items = self._build_tool_input(
+                user_message,
+                browser_context=current_browser_context,
+            )
+
+            input_items.extend(
+                pending_items
+            )
+
             response = self.provider.responses(
                 input_items,
-                TOOLS,
+                self._tools_for_request(user_message),
             )
 
             if not isinstance(
@@ -2205,17 +2524,13 @@ class JarvisAgent:
                     "tools": executed_tools,
                 }
 
-            for item in output:
+            pending_items = [
+                item
+                for item in output
+                if isinstance(item, dict)
+            ]
 
-                if isinstance(
-                    item,
-                    dict,
-                ):
-
-                    input_items.append(
-                        item
-                    )
-
+            tool_outputs = []
             requires_followup = False
 
             for call in function_calls:
@@ -2227,6 +2542,34 @@ class JarvisAgent:
                 arguments = call[
                     "arguments"
                 ]
+
+                if name in self.BROWSER_CONTINUATION_TOOLS:
+                    if browser_steps >= self.MAX_BROWSER_STEPS:
+                        print(
+                            "[AGENT] Maximum browser "
+                            "steps reached."
+                        )
+
+                        return {
+                            "reply": (
+                                "I reached the browser "
+                                "action limit before "
+                                "I could safely continue, "
+                                "Sir."
+                            ),
+                            "type": "agent",
+                            "tools": executed_tools,
+                        }
+
+                    browser_steps += 1
+
+                    print(
+                        "[AGENT] Browser step "
+                        f"{browser_steps}/"
+                        f"{self.MAX_BROWSER_STEPS}"
+                    )
+
+                    requires_followup = True
 
                 if (
                     name
@@ -2260,28 +2603,41 @@ class JarvisAgent:
                     result
                 )
 
+                if name.startswith("browser_"):
+                    bounded_result = self._compact_browser_snapshot(
+                        result
+                    )
+
+                    # The newest browser result becomes the authoritative
+                    # browser state for the next round.
+                    current_browser_context = result
+                else:
+                    bounded_result = result
+
+                    if len(bounded_result) > self.MAX_TOOL_RESULT_CHARS:
+                        bounded_result = (
+                            bounded_result[:self.MAX_TOOL_RESULT_CHARS]
+                            .rstrip()
+                            + "..."
+                        )
+
                 executed_tools.append({
                     "name": name,
                     "arguments": arguments,
-                    "result": result,
+                    "result": bounded_result,
                 })
 
-                if name in {
-                    "browser_observe",
-                    "browser_click",
-                }:
-
-                    requires_followup = True
-
-                input_items.append({
-                    "type": (
-                        "function_call_output"
-                    ),
+                tool_outputs.append({
+                    "type": "function_call_output",
                     "call_id": call[
                         "call_id"
                     ],
-                    "output": result,
+                    "output": bounded_result,
                 })
+
+            pending_items.extend(
+                tool_outputs
+            )
 
             if (
                 not requires_followup
