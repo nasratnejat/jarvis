@@ -2,6 +2,7 @@
 // J.A.R.V.I.S. — app.js
 // TRUE STANDBY / WAKE-WORD CONTROL
 // STREAMING RESPONSES
+// CLEAN SPEECH OUTPUT
 // ============================================================
 
 const SERVER = "http://127.0.0.1:5000";
@@ -30,7 +31,6 @@ let recognitionStarting = false;
 let recognitionRunning = false;
 let recognitionRestartTimer = null;
 
-// Timer/reminder notifications already spoken.
 const spokenTimerEvents = new Map();
 
 // ============================================================
@@ -39,11 +39,9 @@ const spokenTimerEvents = new Map();
 
 const LANG = "en-US";
 
-// These are the ONLY phrases allowed to wake JARVIS.
 const WAKE_RE =
   /\b(?:(?:hey|ok|okay)\s+)?(?:jarvis|jarvas|jervis|jarvi|gervais|travis|charvis|jarvus|wake\s+up)\b/gi;
 
-// Sleep commands.
 const SLEEP_RE =
   /\b(?:sleep|go\s+to\s+sleep|go\s+sleep|sleep\s+mode|go\s+offline|stand\s+by|standby|good\s+night|jarvis\s+sleep)\b/gi;
 
@@ -102,6 +100,67 @@ function removeSilentMetadata(text) {
     .replace(/\*\*\*[\s\S]*?\*\*\*/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+// ============================================================
+// SPEECH CLEANER
+//
+// IMPORTANT:
+// Displayed text is NOT modified.
+// Only text sent to SpeechSynthesis is cleaned.
+//
+// This prevents JARVIS from saying:
+// "asterisk asterisk"
+// "underscore"
+// "backtick"
+// "hash"
+// and similar Markdown punctuation.
+// ============================================================
+
+function cleanForSpeech(text) {
+  let clean = String(text || "");
+
+  // Remove silent metadata blocks first.
+  clean = clean.replace(/\*\*\*[\s\S]*?\*\*\*/g, " ");
+
+  // Markdown links:
+  // [Apple website](https://apple.com)
+  // becomes:
+  // Apple website
+  clean = clean.replace(/\[([^\]]+)\]\((?:https?:\/\/)?[^)]+\)/g, "$1");
+
+  // Remove fenced-code markers but keep code text.
+  clean = clean.replace(/```/g, " ");
+
+  // Markdown emphasis characters.
+  clean = clean.replace(/[*_~`]/g, "");
+
+  // Markdown headings.
+  clean = clean.replace(/^\s*#{1,6}\s+/gm, "");
+
+  // Markdown bullet markers.
+  clean = clean.replace(/^\s*[-•]\s+/gm, "");
+
+  // Markdown blockquote marker.
+  clean = clean.replace(/^\s*>\s+/gm, "");
+
+  // Table separators.
+  clean = clean.replace(/^\s*\|[\s|:-]+\|\s*$/gm, " ");
+
+  // Remaining pipe characters from simple Markdown tables.
+  clean = clean.replace(/\|/g, " ");
+
+  // Repeated punctuation that doesn't need to be spoken.
+  clean = clean.replace(/:{2,}/g, " ");
+
+  clean = clean.replace(/-{3,}/g, " ");
+
+  clean = clean.replace(/={3,}/g, " ");
+
+  // Keep normal punctuation because it improves speech rhythm.
+  clean = clean.replace(/\s+/g, " ").trim();
+
+  return clean;
 }
 
 // ============================================================
@@ -172,6 +231,7 @@ function updateClock() {
 }
 
 updateClock();
+
 setInterval(updateClock, 1000);
 
 // ============================================================
@@ -307,6 +367,8 @@ function showJarvisReply(messageEl, text) {
   const clean = removeSilentMetadata(text);
 
   if (!clean) {
+    console.warn("[JARVIS] Empty reply received.");
+
     return;
   }
 
@@ -314,6 +376,7 @@ function showJarvisReply(messageEl, text) {
     const output = messageEl.querySelector(".txt");
 
     if (output) {
+      // Preserve original response on screen.
       output.textContent = clean;
 
       output.style.display = "block";
@@ -400,7 +463,7 @@ const speakQueue = [];
 let queueRunning = false;
 
 function speakQueued(text) {
-  const cleanText = removeSilentMetadata(text);
+  const cleanText = cleanForSpeech(text);
 
   if (!cleanText) {
     return;
@@ -436,7 +499,7 @@ function drainQueue() {
     stopBtn.style.display = "flex";
   }
 
-  const text = removeSilentMetadata(speakQueue.shift());
+  const text = cleanForSpeech(speakQueue.shift());
 
   if (!text) {
     drainQueue();
@@ -469,7 +532,7 @@ function drainQueue() {
 // ============================================================
 
 function speak(text) {
-  const cleanText = removeSilentMetadata(text);
+  const cleanText = cleanForSpeech(text);
 
   if (!cleanText) {
     return;
@@ -540,7 +603,6 @@ document.addEventListener("keydown", (e) => {
 // ============================================================
 
 async function readJarvisStream(response, messageEl) {
-  // Fallback for a non-streaming response.
   const contentType = response.headers.get("content-type") || "";
 
   if (!contentType.includes("text/event-stream")) {
@@ -618,10 +680,6 @@ async function readJarvisStream(response, messageEl) {
         continue;
       }
 
-      // ----------------------------------------------
-      // DELTA
-      // ----------------------------------------------
-
       if (eventData.type === "delta") {
         const delta = String(eventData.text || "");
 
@@ -631,25 +689,17 @@ async function readJarvisStream(response, messageEl) {
 
         fullReply += delta;
 
-        // Display immediately.
+        // IMPORTANT:
+        // Display the original response.
+        // Do not speech-clean the visible text.
         showJarvisReply(messageEl, fullReply);
-      }
-
-      // ----------------------------------------------
-      // DONE
-      // ----------------------------------------------
-      else if (eventData.type === "done") {
+      } else if (eventData.type === "done") {
         finalReply = removeSilentMetadata(eventData.reply || fullReply);
 
         if (finalReply) {
           showJarvisReply(messageEl, finalReply);
         }
-      }
-
-      // ----------------------------------------------
-      // ERROR
-      // ----------------------------------------------
-      else if (eventData.type === "error") {
+      } else if (eventData.type === "error") {
         streamError = removeSilentMetadata(
           eventData.error || "Streaming error, Sir.",
         );
@@ -689,17 +739,9 @@ async function sendMessage(text) {
 
   console.log("[JARVIS] POST:", `${SERVER}/stream`);
 
-  // --------------------------------------------------------
-  // User message
-  // --------------------------------------------------------
-
   addMsg("user", escapeHtml(text));
 
   setState("thinking", randomLine("thinking").toUpperCase());
-
-  // --------------------------------------------------------
-  // Temporary response
-  // --------------------------------------------------------
 
   const messageEl = addMsg(
     "jarvis",
@@ -756,23 +798,13 @@ async function sendMessage(text) {
       return;
     }
 
-    // ------------------------------------------------------
-    // TRUE STREAMING
-    // ------------------------------------------------------
-
     const reply = await readJarvisStream(response, messageEl);
 
     console.log("[JARVIS] Final reply:", reply);
 
-    // ------------------------------------------------------
-    // SPEAK ONLY AFTER COMPLETE RESPONSE
-    // ------------------------------------------------------
-
+    // Speech gets cleaned Markdown.
+    // The visible answer remains untouched.
     speak(reply);
-
-    // ------------------------------------------------------
-    // MEMORY
-    // ------------------------------------------------------
 
     refreshMemory();
   } catch (err) {
@@ -973,7 +1005,7 @@ function goSleep() {
   }
 
   const goodbye = new SpeechSynthesisUtterance(
-    removeSilentMetadata(randomLine("offline")),
+    cleanForSpeech(randomLine("offline")),
   );
 
   goodbye.rate = 1.02;
@@ -1162,7 +1194,6 @@ if (SR) {
 
     if (!finalCommand) {
       clearSpeechBuffer();
-
       return;
     }
 
@@ -1441,7 +1472,7 @@ async function pollTimerNotifications() {
       addMsg("jarvis", escapeHtml(message));
 
       if (isSpeaking) {
-        speakQueue.push(message);
+        speakQueue.push(cleanForSpeech(message));
       } else {
         speak(message);
       }
