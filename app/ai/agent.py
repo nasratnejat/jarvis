@@ -23,6 +23,7 @@ class JarvisAgent:
 
     MAX_BROWSER_CONTEXT_CHARS = 900
     MAX_BROWSER_RELEVANT_LINES = 16
+    MAX_BROWSER_ACTION_LINES = 10
     MAX_TOOL_RESULT_CHARS = 800
 
     MAX_TOOL_DESCRIPTION_CHARS = 180
@@ -78,7 +79,9 @@ class JarvisAgent:
         "look",
         "find",
         "price",
+        "prices",
         "cost",
+        "costs",
         "weather",
         "youtube",
         "video",
@@ -580,8 +583,8 @@ class JarvisAgent:
             r"\bsearch\b",
             r"\blook\s+up\b",
             r"\bfind\b",
-            r"\bprice\b",
-            r"\bcost\b",
+            r"\bprices?\b",
+            r"\bcosts?\b",
             r"\bweather\b",
             r"\byoutube\b",
             r"\bclick\b",
@@ -766,7 +769,7 @@ class JarvisAgent:
         ).strip()
 
         if re.fullmatch(
-            r"(?:go\s+)?back(?:\s+back)*",
+            r"(?:(?:go\s+)+)?back(?:\s+(?:go\s+)?back)*",
             back_clean,
         ):
             return {
@@ -839,6 +842,49 @@ class JarvisAgent:
                 "arguments": {},
                 "needs_ai": False,
             }
+
+        # Unambiguous compound clicks can be executed locally in one browser
+        # step, followed by one compact AI answer from the resulting page.
+        compound_click_match = re.match(
+            r"^\s*click\s*(?:on\s+)?(.+?)\s+(?:and|then)\s+"
+            r"(?:tell|give|show|read|say|what|which|how|check)\b.+$",
+            lower,
+            re.IGNORECASE,
+        )
+
+        if compound_click_match:
+
+            target = compound_click_match.group(1).strip()
+
+            qualified = re.search(
+                r"\b(?:first|second|third|fourth|last|next|previous|"
+                r"product|item|result|link|button|that\s+says|which\s+says|"
+                r"with\s+(?:a\s+)?(?:price|label|title))\b",
+                target,
+                re.IGNORECASE,
+            )
+
+            if target and not qualified:
+                return {
+                    "name": "browser_click",
+                    "arguments": {
+                        "target": target,
+                    },
+                    "needs_ai": True,
+                }
+
+        # Compound browser actions that require genuine planning stay on the
+        # AI tool path.
+        compound_browser_followup = re.match(
+            r"^\s*(?:open|visit|take\s+me\s+to|go\s+to|click\s+(?:on\s+)?)\b.+?"
+            r"\b(?:and|then)\b.+?"
+            r"\b(?:tell|say|show|read|give|get|what|which|price|cost|starting|offer|offers|spec|details|see|seeing)\b",
+            lower,
+            re.IGNORECASE,
+        )
+
+        if compound_browser_followup:
+            return None
 
         # Browser observation.
         explicit_observation = (
@@ -917,9 +963,18 @@ class JarvisAgent:
                 re.IGNORECASE,
             )
 
+            qualified_click = re.search(
+                r"\b(?:first|second|third|fourth|last|next|previous|"
+                r"product|item|result|link|button|that\s+says|which\s+says|"
+                r"with\s+(?:a\s+)?(?:price|label|title))\b",
+                target,
+                re.IGNORECASE,
+            )
+
             if (
                 target
                 and not compound_click
+                and not qualified_click
             ):
                 return {
                     "name": "browser_click",
@@ -1092,9 +1147,15 @@ class JarvisAgent:
                 }
 
         # YouTube play.
+        # Keep simple media commands local, but do not swallow compound
+        # requests such as:
+        #   "play coupons and tell me the prices"
+        #   "play this then show me the current offers"
+        # Those require the real planner because they combine media control
+        # with a second information/browser task.
         play_match = re.match(
             r"^(?:play|watch|listen\s+to)\s+"
-            r"(.+?)(?:\s+on\s+youtube)?$",
+            r"(.+?)(?:\s+(?:on|in)\s+youtube)?$",
             text,
             re.IGNORECASE,
         )
@@ -1107,7 +1168,21 @@ class JarvisAgent:
                 .strip()
             )
 
-            if query:
+            compound_media_followup = bool(
+                re.search(
+                    r"(?:\b(?:tell(?:ing)?|give(?:ing)?|show(?:ing)?|"
+                    r"read(?:ing)?|say)\s+me\b)|"
+                    r"(?:\b(?:and|then|while|after|on)\s+"
+                    r"(?:tell(?:ing)?|give(?:ing)?|show(?:ing)?|"
+                    r"read(?:ing)?|say|what|which|how(?:\s+much)?|"
+                    r"price|prices|cost|costs|starting|offer|offers|"
+                    r"deal|deals|discount|discounts)\b)",
+                    query,
+                    re.IGNORECASE,
+                )
+            )
+
+            if query and not compound_media_followup:
                 return {
                     "name": "play_youtube",
                     "arguments": {
@@ -1155,7 +1230,7 @@ class JarvisAgent:
         current_price_patterns = (
             r"^\s*what(?:'s|\s+is)\s+"
             r"(?:the\s+)?(?:current\s+)?"
-            r"(?:price|cost)\s*$",
+            r"(?:prices?|costs?)\s*$",
 
             r"^\s*how\s+much\s+"
             r"(?:is\s+it|does\s+it\s+cost)"
@@ -1167,7 +1242,7 @@ class JarvisAgent:
 
             r"^\s*(?:tell|give)\s+me\s+"
             r"(?:the\s+)?(?:current\s+)?"
-            r"(?:price|cost)\s*$",
+            r"(?:prices?|costs?)\s*$",
         )
 
         if any(
@@ -1208,7 +1283,6 @@ class JarvisAgent:
                     "name": "search_product_price",
                     "arguments": {
                         "product": product,
-                        "location": "",
                     },
                     "needs_ai": False,
                 }
@@ -1233,7 +1307,6 @@ class JarvisAgent:
                     "name": "search_product_price",
                     "arguments": {
                         "product": product,
-                        "location": "",
                     },
                     "needs_ai": False,
                 }
@@ -1894,9 +1967,26 @@ class JarvisAgent:
                             "Use only this observed page "
                             "state for the next browser "
                             "decision. Prefer exact visible "
-                            "targets. Search externally only "
+                            "targets and visible clickable "
+                            "elements. For compound tasks such "
+                            "as click X and then tell me Y, use "
+                            "the visible action target first; do not "
+                            "replace a current-site click with a web "
+                            "search. Search externally only "
                             "when the requested target is not "
-                            "available on this page.\n\n"
+                            "available on this page and there is "
+                            "no usable current-site path. For current-site "
+                            "navigation such as click/find/open, prefer the "
+                            "site's own visible targets and controls; do not "
+                            "use Google as a substitute unless the user "
+                            "explicitly asks for a web search or no usable "
+                            "path exists on the current site. If the "
+                            "observed page already contains the requested "
+                            "information, answer from that evidence instead "
+                            "of navigating deeper or clicking unrelated "
+                            "elements. Do not click a navigation item merely "
+                            "to keep the task moving when the current state "
+                            "already supports the answer.\n\n"
                             + compact_browser
                         ),
                     }
@@ -2075,6 +2165,54 @@ class JarvisAgent:
 
         first_lines = lines[:6]
 
+        # Browser tasks depend heavily on the action list extracted by the
+        # browser worker. Keep target-matching links/buttons visible even when
+        # the page text is much larger than the compact context budget.
+        action_lines = []
+        in_action_section = False
+
+        for index, line in enumerate(lines):
+
+            if re.search(
+                r"\bvisible\s+clickable\s+elements\b",
+                line,
+                re.IGNORECASE,
+            ):
+                in_action_section = True
+                continue
+
+            if in_action_section:
+                if re.match(
+                    r"^-\s*\[\d+\]\s+",
+                    line,
+                ):
+                    action_lines.append((index, line))
+                    continue
+
+                # Stop when the action block has clearly ended.
+                if line and not line.startswith("-"):
+                    if action_lines:
+                        in_action_section = False
+
+        focus_action_lines = []
+        fallback_action_lines = []
+
+        for index, line in action_lines:
+            lower_line = line.lower()
+            if any(
+                term in lower_line
+                for term in focus_terms
+                if term
+            ):
+                focus_action_lines.append((index, line))
+            else:
+                fallback_action_lines.append((index, line))
+
+        selected_actions = (
+            focus_action_lines[: cls.MAX_BROWSER_ACTION_LINES]
+            or fallback_action_lines[: min(6, cls.MAX_BROWSER_ACTION_LINES)]
+        )
+
         candidates = []
 
         for index, line in enumerate(
@@ -2114,6 +2252,15 @@ class JarvisAgent:
             len(line) + 1
             for line in selected
         )
+
+        # Preserve the most relevant visible actions before generic page text.
+        for _, line in selected_actions:
+            line_length = len(line) + 1
+            if current_length + line_length > cls.MAX_BROWSER_CONTEXT_CHARS:
+                continue
+            if line not in selected:
+                selected.append(line)
+                current_length += line_length
 
         for score, index, line in (
             candidates
@@ -2182,6 +2329,227 @@ class JarvisAgent:
             )
 
         return result
+
+    @classmethod
+    def _browser_state_has_requested_evidence(
+        cls,
+        user_message,
+        browser_result,
+    ):
+        """Return True when the current page already supports the answer.
+
+        This is intentionally generic. It does not know any website layout;
+        it only looks for the user's requested information and corroborating
+        evidence already present in the observed browser state.
+        """
+
+        message = str(user_message or "").strip().lower()
+        state = str(browser_result or "").strip()
+
+        if not message or not state:
+            return False
+
+        # Pure navigation/action requests should not be finalized here.
+        if not re.search(
+            r"\b(?:tell|give|show|read|what|which|how much|how many|"
+            r"price|cost|starting|offer|offers|deal|discount|compare|difference|"
+            r"spec|specification|details|feature|features|available|availability|"
+            r"in stock|delivery|battery|display|screen|storage|memory|chip|processor)\b",
+            message,
+            re.IGNORECASE,
+        ):
+            return False
+
+        compact_state = state.lower()
+        focus_terms = cls._extract_focus_terms(message)
+
+        # Ignore generic task words when determining whether the page contains
+        # the actual subject of the request.
+        subject_terms = [
+            term
+            for term in focus_terms
+            if term not in {
+                "price",
+                "prices",
+                "cost",
+                "costs",
+                "starting",
+                "offer",
+                "offers",
+                "deal",
+                "deals",
+                "discount",
+                "discounts",
+                "spec",
+                "specs",
+                "specification",
+                "specifications",
+                "details",
+                "feature",
+                "features",
+                "compare",
+                "comparison",
+                "difference",
+                "differences",
+                "available",
+                "availability",
+            }
+        ]
+
+        subject_present = bool(
+            not subject_terms
+            or any(
+                term in compact_state
+                for term in subject_terms
+            )
+        )
+
+        if not subject_present:
+            return False
+
+        asks_price = bool(re.search(
+            r"\b(?:price|prices|cost|costs|how much|starting)\b",
+            message,
+            re.IGNORECASE,
+        ))
+        has_price = bool(re.search(
+            r"(?:[$€£]\s?\d[\d,.]*|\b\d[\d,.]*\s?(?:usd|eur|gbp)\b)",
+            compact_state,
+            re.IGNORECASE,
+        ))
+
+        asks_specs = bool(re.search(
+            r"\b(?:spec|specs|specification|specifications|details|feature|features|battery|display|screen|storage|memory|chip|processor|resolution|dimensions?)\b",
+            message,
+            re.IGNORECASE,
+        ))
+        spec_markers = (
+            "battery",
+            "display",
+            "screen",
+            "storage",
+            "memory",
+            "chip",
+            "processor",
+            "resolution",
+            "dimensions",
+            "spec",
+            "feature",
+        )
+        has_specs = any(
+            marker in compact_state
+            for marker in spec_markers
+        )
+
+        asks_offers = bool(re.search(
+            r"\b(?:offer|offers|deal|deals|discount|discounts|financing|trade[- ]in)\b",
+            message,
+            re.IGNORECASE,
+        ))
+        has_offers = bool(re.search(
+            r"\b(?:offer|offers|deal|deals|discount|discounts|financing|trade[- ]in|save|off)\b",
+            compact_state,
+            re.IGNORECASE,
+        ))
+
+        asks_availability = bool(re.search(
+            r"\b(?:available|availability|in stock|stock|delivery|ships|shipping)\b",
+            message,
+            re.IGNORECASE,
+        ))
+        has_availability = bool(re.search(
+            r"\b(?:available|availability|in stock|stock|delivery|ships|shipping)\b",
+            compact_state,
+            re.IGNORECASE,
+        ))
+
+        asks_compare = bool(re.search(
+            r"\b(?:compare|comparison|difference|differences|which)\b",
+            message,
+            re.IGNORECASE,
+        ))
+        has_compare_evidence = (
+            len(re.findall(r"\b(?:from|buy|price|memory|storage|battery|display|screen|feature|spec)\b", compact_state)) >= 2
+        )
+
+        is_context_question = cls._looks_like_browser_context_request(
+            message
+        )
+
+        if is_context_question:
+            return len(state) >= 80 and subject_present
+
+        if asks_price:
+            return has_price and subject_present
+
+        if asks_specs:
+            return has_specs and subject_present
+
+        if asks_offers:
+            return has_offers and subject_present
+
+        if asks_availability:
+            return has_availability and subject_present
+
+        if asks_compare:
+            return has_compare_evidence and subject_present
+
+        # Generic "tell me what..." requests still need meaningful content.
+        return subject_present and len(state) >= 180
+
+    @staticmethod
+    def _is_search_blocked_page(browser_result):
+        """Detect common search-engine anti-automation/block pages."""
+
+        text = str(browser_result or "").lower()
+
+        if not text:
+            return False
+
+        return bool(
+            re.search(
+                r"(?:google\.com/sorry|about this page|"
+                r"our systems have detected unusual traffic|"
+                r"checks to see if it(?:'|’)s really you|"
+                r"not a robot)",
+                text,
+                re.IGNORECASE,
+            )
+        )
+
+    def _build_final_browser_response(
+        self,
+        user_message,
+        browser_result,
+    ):
+        """Generate one concise answer from the observed browser state."""
+
+        browser_input = self._build_browser_input(
+            user_message,
+            browser_result,
+        )
+
+        response = self.provider.responses(
+            browser_input,
+            None,
+        )
+
+        if not isinstance(response, dict) or response.get("error"):
+            return (
+                self._safe_reply_text(
+                    response.get("error")
+                    if isinstance(response, dict)
+                    else ""
+                )
+                or self._safe_reply_text(browser_result)
+            )
+
+        return (
+            self._safe_reply_text(
+                self._get_text(response)
+            )
+            or self._safe_reply_text(browser_result)
+        )
 
     def _build_browser_input(
         self,
@@ -3156,6 +3524,42 @@ class JarvisAgent:
                         bounded_result
                     )
 
+                    # If this fresh browser state already contains the
+                    # evidence needed to answer the user's question, stop
+                    # tool-chaining immediately and produce one compact final
+                    # answer. This prevents generic navigation drift such as
+                    # clicking unrelated header links after the answer is
+                    # already visible on the page.
+                    if (
+                        self._browser_state_has_requested_evidence(
+                            user_message,
+                            current_browser_context,
+                        )
+                    ):
+
+                        final_reply = (
+                            self._build_final_browser_response(
+                                user_message,
+                                current_browser_context,
+                            )
+                        )
+
+                        print(
+                            "[AGENT] Current browser state already "
+                            "contains sufficient evidence; "
+                            "skipping further navigation."
+                        )
+
+                        return {
+                            "reply": final_reply,
+                            "type": "agent",
+                            "tools": executed_tools + [{
+                                "name": name,
+                                "arguments": arguments,
+                                "result": bounded_result,
+                            }],
+                        }
+
                 else:
 
                     bounded_result = result
@@ -3196,6 +3600,29 @@ class JarvisAgent:
                             focus_text=user_message,
                         )
                     )
+
+                    if self._is_search_blocked_page(search_page):
+
+                        print(
+                            "[AGENT] External search was blocked by "
+                            "the search engine; stopping repeated retries."
+                        )
+
+                        executed_tools.append({
+                            "name": "browser_observe",
+                            "arguments": {},
+                            "result": current_browser_context,
+                        })
+
+                        return {
+                            "reply": (
+                                "The search engine blocked automated traffic, "
+                                "Sir. I stopped rather than repeating the blocked "
+                                "search."
+                            ),
+                            "type": "agent",
+                            "tools": executed_tools,
+                        }
 
                     print(
                         "[AGENT] Search continuation: "
